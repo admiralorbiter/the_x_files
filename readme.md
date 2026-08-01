@@ -4,6 +4,25 @@ A collection of interactive coding experiments, physics simulations, and mathema
 
 ---
 
+## 🧪 Experiments
+
+### 3. [Momentum Maze: Pendulum Vault](file:///c:/Users/admir/Github/the_x_files/momentum-maze/README.md) (`/momentum-maze`)
+
+A pulse-based control puzzle in which the player steers a physical pendulum through hand-designed challenge rooms by navigating its phase portrait.
+
+- **Concept**: The player's position is the state $(\theta, \omega)$ — angle and angular velocity simultaneously. The phase space is the actual world, not a HUD overlay. The physical pendulum view and the mathematical phase-portrait view are equally prominent at all times.
+- **Mechanic**: At each decision point, the player chooses one of three bounded torque pulses ($-u_{\max}$, $0$, $+u_{\max}$). Three predicted trajectories are always visible before committing. Planning happens in stillness; execution is deterministic.
+- **Research question**: Can navigating a phase portrait become an understandable and engaging game mechanic without formal mathematical vocabulary?
+- **Math**: Nonlinear pendulum ODE on the phase cylinder $S^1 \times \mathbb{R}$, fixed-step RK4 integration, energy contours, separatrix at $E=2$, pulse-energy shaping $\dot{E}=u\omega$.
+- **Run**:
+  ```bash
+  cd momentum-maze
+  pip install -r requirements.txt
+  python main.py
+  ```
+
+---
+
 ### 2. [The Binary House](file:///c:/Users/admir/Github/the_x_files/binary-house/README.md) (`/binary-house`)
 
 An experimental mathematical puzzle-stealth game built with Python and Pygame.
@@ -20,8 +39,6 @@ An experimental mathematical puzzle-stealth game built with Python and Pygame.
   ```
 
 ---
-
-## 🧪 Experiments
 
 ### 1. [Spherical Maze Lab](file:///c:/Users/admir/Github/the_x_files/non-euclidean-geo/README.md) (`/non-euclidean-geo`)
 

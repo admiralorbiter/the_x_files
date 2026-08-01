@@ -1,0 +1,29 @@
+{
+  "id": "chamber_03",
+  "name": "Chamber 3: Pump",
+  "initial_state": {
+    "theta": 0.0,
+    "omega": 0.5
+  },
+  "parameters": {
+    "damping": 0.06,
+    "torque_limit": 0.35,
+    "gravity_over_length": 1.0
+  },
+  "pulse_budget": 14,
+  "controls_enabled": true,
+  "target_description": "Pump Energy to Complete 360° Rotation",
+  "constraints": [
+    {
+      "type": "rotation_key",
+      "name": "Rotation Key"
+    },
+    {
+      "type": "downward_dock",
+      "theta_tol": 0.25,
+      "omega_tol": 0.35,
+      "name": "Downward Dock"
+    }
+  ],
+  "tutorial_flags": []
+}

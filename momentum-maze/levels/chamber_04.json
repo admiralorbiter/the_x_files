@@ -1,0 +1,29 @@
+{
+  "id": "chamber_04",
+  "name": "Chamber 4: Cross and Return",
+  "initial_state": {
+    "theta": 0.0,
+    "omega": 0.0
+  },
+  "parameters": {
+    "damping": 0.06,
+    "torque_limit": 0.35,
+    "gravity_over_length": 1.0
+  },
+  "pulse_budget": 16,
+  "controls_enabled": true,
+  "target_description": "Cross Separatrix, Rotate, then Return to Dock",
+  "constraints": [
+    {
+      "type": "rotation_key",
+      "name": "Rotation Key"
+    },
+    {
+      "type": "downward_dock",
+      "theta_tol": 0.25,
+      "omega_tol": 0.35,
+      "name": "Downward Dock"
+    }
+  ],
+  "tutorial_flags": []
+}

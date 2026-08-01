@@ -1,0 +1,25 @@
+{
+  "id": "chamber_01",
+  "name": "Chamber 1: Arrive Quietly",
+  "initial_state": {
+    "theta": 1.0,
+    "omega": 0.0
+  },
+  "parameters": {
+    "damping": 0.06,
+    "torque_limit": 0.35,
+    "gravity_over_length": 1.0
+  },
+  "pulse_budget": 12,
+  "controls_enabled": true,
+  "target_description": "Dock at Bottom (|θ|<0.20, |ω|<0.35)",
+  "constraints": [
+    {
+      "type": "downward_dock",
+      "theta_tol": 0.20,
+      "omega_tol": 0.35,
+      "name": "Downward Dock"
+    }
+  ],
+  "tutorial_flags": []
+}

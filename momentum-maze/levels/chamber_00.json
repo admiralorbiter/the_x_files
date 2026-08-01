@@ -1,0 +1,18 @@
+{
+  "id": "chamber_00",
+  "name": "Chamber 0: The Moving Point",
+  "initial_state": {
+    "theta": 1.2,
+    "omega": 0.0
+  },
+  "parameters": {
+    "damping": 0.06,
+    "torque_limit": 0.35,
+    "gravity_over_length": 1.0
+  },
+  "pulse_budget": null,
+  "controls_enabled": false,
+  "target_description": "Observe Phase Trajectory",
+  "constraints": [],
+  "tutorial_flags": ["show_trail", "show_phase_flow", "show_wrap_hint"]
+}
