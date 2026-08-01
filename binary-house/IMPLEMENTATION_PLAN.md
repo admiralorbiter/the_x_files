@@ -1,384 +1,106 @@
 # The Binary House — Implementation Plan
 
-A turn-based puzzle-stealth prototype built in Python + Pygame, in which all spatial relationships, enemy detection, sound propagation, and puzzle logic are grounded in 2-adic (ultrametric) distance.
+A turn-based puzzle-stealth prototype built in Python + Pygame, in which all spatial relationships, enemy detection, sound propagation, and puzzle logic are grounded in **2-adic (ultrametric) distance**.
 
-The prototype is simultaneously a game and a mathematical interface-design experiment.
+The project is both a game (**The House That Remembers**) and a mathematical interface-design experiment.
 
 ---
 
-## Decisions & Resolved Questions
+## Decisions & Resolved Status
 
 > [!NOTE]
-> **Visual representation style** — **Decision: Abstract card/tile view for M0–M2**.
-> Rooms are rendered as abstract tiles where visual layers (color family, hatch pattern, icon) encode address prefix depth. This provides maximal legibility for testing the 2-adic distance mental model before upgrading to diegetic rendering in Milestone 4.
+> **Milestones 0 through 5: ALL COMPLETED & TESTED (40/40 Passing Unit Tests)**.
+> All components from core math kernel, navigation instrument, diegetic fiction layer, stealth loop, distraction tools, 256-room 8-bit world, and arithmetic mutations (rearrangement & contraction) are fully implemented and verified.
 
 > [!NOTE]
-> **Audio inheritance** — **Decision: Minimal synthesized audio in Milestone 1**.
-> Pygame's `sndarray` (or simple numpy waveform synthesis) will synthesize simple additive audio layers for digits 0–2. Rooms sharing near digits share sonic layers, testing multi-channel inheritance early without asset overhead.
+> **Visual representation style** — **Diegetic Renderer with Procedural Compositing & Drawn Lineage Icons**.
+> Rooms are rendered as room-dominant interiors with layered procedural visual composition. Ribbon icons are custom geometric vector drawings (Tree/Tower, Moon/Sun, Candle/Bell, Eye/Moth).
 
 > [!NOTE]
-> **Progressive disclosure world sizes** — Parameterized via `--depth` (4 for M1, 6 for M2/M3, 8 for M4). All stages run on the same codebase.
+> **Audio inheritance** — Additive audio motifs for digits $b_0, b_1, b_2$ synthesized at runtime via Pygame.
+
+> [!NOTE]
+> **Progressive disclosure world sizes** — Parameterized via `--depth` (4 for M1 tutorial, 6 for M2/M3 stealth loop, 8 for M4/M5 256-room full scenarios).
 
 ---
 
-## Proposed Changes
+## Architecture & Completed Components
 
-### Component 1 — Project Scaffold
+### Component 1 — Mathematical Kernel (`binary_house/core/`) ✅
 
-#### [NEW] `binary-house/requirements.txt`
-- `pygame>=2.5`
-- `pytest>=8.0`
-- `pytest-cov`
+- `address.py`: `Address` dataclass ($\mathbb{Z}/2^n\mathbb{Z}$), bit extraction, near-first formatting.
+- `metric.py`: 2-adic valuation $v_2(n)$, `distance_level(a, b)` ($k$), `distance_float(a, b)` ($2^{-k}$).
+- `ball.py`: `Ball` dataclass ($B_k(x)$), membership `contains()`, size, parent, children, static topological `relationship()` (equal, nested, disjoint).
+- `door.py`: `ToggleDigit` ($x \oplus 2^k$), `AffineDoor` ($x \mapsto ax + b \bmod 2^n$ odd multiplier isometry).
+- `contraction.py`: `contract_2x` ($x \mapsto 2x \bmod 2^n$).
 
-#### [NEW] `binary-house/app.py`
-Top-level entry point. Parses a `--depth` flag (default 8), initializes `pygame`, constructs `World` and `GameState`, and hands control to the main game loop.
+### Component 2 — World Model (`binary_house/world/`) ✅
 
-#### [NEW] `binary-house/IMPLEMENTATION_PLAN.md`
-Copy of this document, living inside the project folder for posterity.
+- `room.py`: `RoomStyle` (8-layer prefix-derived traits) and `Room` dataclass.
+- `generator.py`: Seeded prefix-tree style mutation & door availability generator.
+- `world.py`: `generate_world()` populates room graph, multi-scale seals (3 seals for $\le 6$-bit, 5 seals for 8-bit), relational clues (`make_relational_clue()`), exit ball, and scattered resources.
+- `machine.py`: `RearrangementMachine` providing thematic named affine isometries ("The Folding", "The Inversion", "The Drift").
 
----
+### Component 3 — Game Logic (`binary_house/game/`) ✅
 
-### Component 2 — Mathematical Kernel (`binary_house/core/`)
+- `state.py`: `GameState` turn resolution engine, event log, win/capture checks, `rearrange_world()`, `apply_contraction()`.
+- `caretaker.py`: `CaretakerState` AI, search ball, frustration counter, heat level system (`effective_detection_depth`), `recognized_layers()`.
+- `sound.py`: `SoundRegion` hierarchical expansion through parent balls.
+- `lure.py`: `LureRegion` decoy lineage baiting.
+- `player.py`: `MoveAction`, `UseChalk`, `UseQuietSteps`, `UseLure`, `BranchKeyAction`, `RearrangeAction`, `ContractAction`, `WaitAction`.
 
-This is the most critical component. It must be 100% tested before any rendering begins (Milestone 0 stop condition).
+### Component 4 — UI & Diegetic Presentation (`binary_house/ui/`) ✅
 
-#### [NEW] `binary_house/core/address.py`
-
-```python
-@dataclass(frozen=True)
-class Address:
-    value: int      # integer in [0, 2**depth)
-    depth: int = 8
-
-    def bit(self, index: int) -> int:
-        """Return the digit at near-position `index` (0 = least significant)."""
-        return (self.value >> index) & 1
-
-    def prefix(self, k: int) -> int:
-        """Return the integer formed by the first k near digits."""
-        return self.value & ((1 << k) - 1)
-
-    def near_first_str(self) -> str:
-        """Format as b₀·b₁·…·b_{depth-1}."""
-        return " · ".join(str(self.bit(i)) for i in range(self.depth))
-```
-
-#### [NEW] `binary_house/core/metric.py`
-
-```python
-def valuation_2(n: int) -> int:
-    """2-adic valuation of a nonzero integer."""
-    ...
-
-def distance_level(a: Address, b: Address) -> int | None:
-    """Index of first differing near digit; None if identical.
-    
-    The 2-adic distance is 2^(-distance_level(a, b)).
-    Game systems should work with the integer level, not the float.
-    """
-    ...
-
-def distance_float(a: Address, b: Address) -> float:
-    """2^(-distance_level(a,b)), or 0.0 if identical. For display only."""
-    ...
-```
-
-Key invariant tested exhaustively:
-- `distance_level(x, x XOR 2^k) == k` for all valid x, k
-- Strong triangle inequality: `distance_level(x,z) >= min(distance_level(x,y), distance_level(y,z))`
-
-#### [NEW] `binary_house/core/ball.py`
-
-```python
-@dataclass(frozen=True)
-class Ball:
-    residue: int   # the shared prefix value
-    depth: int     # number of fixed digits (0 = whole space)
-
-    def contains(self, address: Address) -> bool: ...
-    def size(self) -> int: ...          # 2^(address_depth - self.depth)
-    def parent(self) -> Ball | None: ... # Ball at depth-1
-    def children(self) -> tuple[Ball, Ball]: ... # two sub-balls at depth+1
-
-    @staticmethod
-    def relationship(a: "Ball", b: "Ball") -> Literal["equal","nested","disjoint"]: ...
-```
-
-Key invariant: two balls are always `equal`, one `nested` inside the other, or `disjoint`. Never partial overlap.
-
-#### [NEW] `binary_house/core/door.py`
-
-```python
-class DoorOperation(Protocol):
-    def apply(self, address: Address) -> Address: ...
-    def distance_level(self) -> int: ...        # how large a move this is
-    def noise_depth(self) -> int: ...           # ball depth of initial sound
-
-@dataclass(frozen=True)
-class ToggleDigit:
-    index: int   # digit to flip (0 = nearest)
-    def apply(self, address: Address) -> Address:
-        return Address(address.value ^ (1 << self.index), address.depth)
-    def distance_level(self) -> int: return self.index
-    def noise_depth(self) -> int: return self.index   # noise fills ball at this depth
-
-@dataclass(frozen=True)
-class AffineDoor:
-    """x → (multiplier * x + offset) mod 2^depth. Used for Milestone 5."""
-    multiplier: int   # must be odd
-    offset: int
-    def apply(self, address: Address) -> Address: ...
-```
+- `fiction.py`: `FictionMapper` single source of truth for math $\leftrightarrow$ fiction translation.
+- `diegetic_renderer.py`: Player-facing diegetic view compositor (Lineage Ribbon, House Memory nested frames, Echoes panel, Door Preview footer, Seals counter).
+- `debug_renderer.py`: F2 Mathematical Debug View (raw addresses, distance exponents).
+- `renderer.py`: Unified view dispatcher (Diegetic / Archivist / Debug mode switching).
+- `hud.py`: Ribbon, neighborhood stack, scale ledger rendering.
+- `assets.py`: Custom geometric lineage icons & composite procedural room interior art.
+- `transitions.py`: Layer-preserving transition animation engine.
+- `audio.py`: Additive runtime audio synthesizer.
+- `screens.py`: `ScreenOverlay` win / capture end-of-game modals.
+- `tutorial.py`: 5-scene onboarding sequence state machine.
 
 ---
 
-### Component 3 — World Model (`binary_house/world/`)
+## Complete Test Suite (`tests/`) ✅
 
-#### [NEW] `binary_house/world/room.py`
+| Test File | Covered Functionality | Status |
+|---|---|---|
+| `test_address.py` | Creation, wrapping, bit extraction, near-first formatting | ✅ PASSED |
+| `test_ball.py` | Membership, hierarchy, topological relationship (6-bit exhaustive) | ✅ PASSED |
+| `test_caretaker.py` | Detection ball, turn sequence | ✅ PASSED |
+| `test_caretaker_m2.py` | Frustration widening, recognized layers | ✅ PASSED |
+| `test_door.py` | ToggleDigit distance, AffineDoor isometry, even multiplier rejection | ✅ PASSED |
+| `test_fiction.py` | Lineage tokens, door previews, echo descriptions, wing names | ✅ PASSED |
+| `test_lure.py` | LureRegion timer, Caretaker lure attraction, UseLure action | ✅ PASSED |
+| `test_metric.py` | 2-adic valuation, distance levels, 6-bit exhaustive strong triangle inequality | ✅ PASSED |
+| `test_resources.py` | QuietSteps noise reduction, Chalking, BranchKey | ✅ PASSED |
+| `test_tutorial.py` | Tutorial sequence advancement | ✅ PASSED |
+| `test_world_generation.py` | Relational clues, multi-scale seal placement | ✅ PASSED |
+| `test_world_m4.py` | 8-bit 5-seal world generation, Caretaker heat system | ✅ PASSED |
+| `test_contraction.py` | $2\times$ contraction math & parity properties | ✅ PASSED |
+| `test_rearrangement.py` | Distance-preserving affine rearrangement & contraction actions | ✅ PASSED |
 
-```python
-@dataclass
-class RoomStyle:
-    architecture_family: int    # 0/1 from b₀
-    floor_pattern: int          # 0/1 from b₁
-    palette_index: int          # 0/1 from b₂
-    ambient_sound_id: int       # 0/1 from b₃
-    furniture_set: int          # 0/1 from b₄
-    surface_texture: int        # 0/1 from b₅
-    object_arrangement: int     # 0/1 from b₆
-    anomaly_tag: int            # 0/1 from b₇
-
-@dataclass
-class Room:
-    address: Address
-    style: RoomStyle
-    doors: list[ToggleDigit]        # available exits
-    contains_seal: int | None       # seal index 0/1/2, or None
-    contains_resource: str | None   # "chalk" | "quiet_steps" | "branch_key" | "address_lens"
-    has_hiding_spot: bool
-    environmental_clue: str | None  # text clue for Address Reconstruction puzzles
-```
-
-#### [NEW] `binary_house/world/generator.py`
-
-Seeded prefix-tree room generator. Each room's `RoomStyle` is built by walking the address from the root, applying one controlled mutation per digit:
-
-```python
-def room_style(address: Address, world_seed: int) -> RoomStyle:
-    style = base_style(world_seed)
-    prefix = 0
-    for depth in range(address.depth):
-        prefix |= address.bit(depth) << depth
-        style = mutate_style(style, seed=hash((world_seed, depth, prefix)), depth=depth)
-    return style
-```
-
-This guarantees **shared-prefix → shared-style** without explicit lookup tables.
-
-Door availability is also seeded: every room always has two to four doors covering a spread of digit scales. Mandatory doors at digit 0 (structural) and digit `depth-1` (deepest) are always present.
-
-#### [NEW] `binary_house/world/world.py`
-
-```python
-@dataclass
-class World:
-    depth: int          # 4, 6, or 8
-    seed: int
-    rooms: dict[int, Room]          # address.value → Room
-    seal_locations: list[Address]   # 3 seals for full prototype
-    exit_ball: Ball                 # the target neighborhood
-    caretaker_start: Address
-    player_start: Address
-```
-
-Populated once at startup. Immutable after generation.
+**Total Automated Tests: 40 / 40 PASSED**
 
 ---
 
-### Component 4 — Game Logic (`binary_house/game/`)
-
-#### [NEW] `binary_house/game/state.py`
-
-```python
-@dataclass
-class GameState:
-    world: World
-    player_address: Address
-    caretaker: CaretakerState
-    turn: int
-    seals_collected: set[int]
-    sound_regions: list[SoundRegion]    # active sound balls with decay timers
-    resources: Counter[str]
-    event_log: list[TurnEvent]
-    phase: Literal["explore","detected","captured","escaped","won"]
-```
-
-The `step(action)` method executes the full **turn sequence**:
-1. Player movement resolves (address change, resource use)
-2. New `SoundRegion` created at `Ball(residue=new_addr.prefix(door.distance_level()), depth=door.distance_level())`
-3. All `SoundRegion`s expand one level (depth decreases by 1)
-4. Caretaker updates belief ball (narrows if sound/door evidence available)
-5. Caretaker acts (moves toward player belief)
-6. Detection check: `player_address ≡ caretaker_address (mod 2^h)`
-7. Capture check: `player_address == caretaker_address`
-8. Seal pickup check
-9. Exit check: `exit_ball.contains(player_address)` and all seals collected
-10. Append `TurnEvent` to log
-
-#### [NEW] `binary_house/game/caretaker.py`
-
-```python
-@dataclass
-class CaretakerState:
-    address: Address
-    detection_depth: int     # h — detects player within this ball
-    search_ball: Ball        # current known player region
-    suspicion: int           # 0–100
-    movement_energy: int
-```
-
-Deterministic behavior per turn:
-- If `search_ball.depth < detection_depth + 2`: narrow search one level
-- Else: move to any address inside `search_ball` at minimum cost
-- Movement cost of changing digit `k` = `(address.depth - k)` — prefers local moves
-
-#### [NEW] `binary_house/game/sound.py`
-
-```python
-@dataclass
-class SoundRegion:
-    ball: Ball
-    age: int = 0
-
-    def expand(self) -> "SoundRegion | None":
-        """Return parent ball region, or None if already at root."""
-        parent = self.ball.parent()
-        if parent is None:
-            return None
-        return SoundRegion(ball=parent, age=self.age + 1)
-```
-
-Caretaker receives a "sound signal" when its address is inside any active `SoundRegion`. It uses this to narrow its `search_ball`.
-
-#### [NEW] `binary_house/game/player.py`
-
-Resource management and action validation. Actions: `MoveAction(door)`, `UseChalk(depth)`, `UseQuietSteps(door)`, `UseBranchKey(door)`, `UseAddressLens()`, `Wait()`.
-
----
-
-### Component 5 — UI (`binary_house/ui/`)
-
-**Milestone 1 scope**: abstract node/card view. Diegetic room rendering deferred to Milestone 4.
-
-#### [NEW] `binary_house/ui/renderer.py`
-
-Main Pygame surface compositor. Layout:
-
-```
-┌──────────────────────────────────────────────────────┐
-│  ADDRESS RIBBON                                      │
-├────────────────┬─────────────────────┬───────────────┤
-│ NEIGHBORHOOD   │   ROOM PANEL        │ SCALE LEDGER  │
-│ STACK          │                     │               │
-│                │  (visual style +    │  DISTANCE 2⁻⁷ │
-│ 1·0·1·1·...    │   door list)        │  • faint sound│
-│                │                     │               │
-│                │                     │  DISTANCE 2⁻⁴ │
-│                │                     │  • seal       │
-├────────────────┴─────────────────────┴───────────────┤
-│  DOOR PREVIEW   (inline, updates on hover/select)    │
-└──────────────────────────────────────────────────────┘
-```
-
-#### [NEW] `binary_house/ui/hud.py`
-
-- **Address ribbon**: `b₀ · b₁ · … · b₇`. The selected door's changed digit pulses; preserved digits stay bright; deeper unaffected digits dimmed.
-- **Neighborhood stack**: rows of `"1·0·1·1·…"` with room count, known threats, known objectives.
-- **Scale ledger**: entities grouped by distance level. **No angular position is implied**.
-- **Door preview**: shows current address → result, changed digit index, distance, noise level.
-
-#### [NEW] `binary_house/ui/assets.py`
-
-Procedural visual generation. Each `RoomStyle` field maps to a distinct visual parameter (shape family, hatch pattern, color hue, icon). Abstract card view for early milestones. All digit state encoded with *both* color/hue *and* shape/pattern (accessibility requirement).
-
----
-
-### Component 6 — Tests (`tests/`)
-
-#### [NEW] `tests/test_address.py`
-- Bit extraction correctness
-- `near_first_str` formatting
-- Prefix extraction
-
-#### [NEW] `tests/test_metric.py`
-- `distance_level(x, x ^ 2^k) == k` for all x in 6-bit world, all k
-- Strong triangle inequality: exhaustive 64³ = 262,144 triple check
-- Symmetry: `distance_level(a,b) == distance_level(b,a)`
-- Identity: `distance_level(a,a) is None`
-
-#### [NEW] `tests/test_ball.py`
-- Membership correctness
-- Nested-or-disjoint: exhaustive check over all ball pairs in 6-bit world
-- `parent().contains(x)` if `child.contains(x)`
-
-#### [NEW] `tests/test_door.py`
-- `ToggleDigit(k).apply(x)` has `distance_level == k`
-- `AffineDoor(a, b)` with odd `a` is an isometry
-- Translation `AffineDoor(1, b)` is an isometry for all b
-
-#### [NEW] `tests/test_caretaker.py`
-- Detection fires iff `player_address.prefix(h) == caretaker_address.prefix(h)`
-- Search ball narrows correctly on sound signal
-- Movement cost ordering: local moves preferred over structural
-
-#### [NEW] `tests/test_sound.py`
-- Sound region expands through parent balls
-- After `depth` expansions, sound covers the whole space
-
----
-
-## Verification Plan
-
-### Automated Tests (Milestone 0 gate)
+## Executable Entry Points
 
 ```bash
 cd binary-house
-pytest tests/ -v --tb=short
+
+# 4-bit 16-room tutorial scenario
+python app.py --depth 4 --tutorial
+
+# 6-bit 64-room stealth scenario with Caretaker
+python app.py --depth 6
+
+# Full 8-bit 256-room climax scenario
+python app.py --depth 8
+
+# Launch directly into F2 Mathematical Debug View
+python app.py --depth 8 --debug
 ```
-
-All tests must pass before renderer work begins. The mathematical kernel is treated as a safety-critical component.
-
-Exhaustive invariants checked on the **6-bit world** (64 addresses):
-
-| Invariant | Scope |
-|-----------|-------|
-| `d(x, x XOR 2^k) = 2^(−k)` | all 64 × 8 pairs |
-| Strong triangle inequality | 64³ = 262,144 triples |
-| Balls nested or disjoint | all ball pairs |
-| Translation isometry | all 64 × 64 (x,b) pairs |
-| Odd-multiplier isometry | all 32 odd multipliers × 64 addresses |
-
-### Manual Verification (per milestone)
-
-| Milestone | Check |
-|-----------|-------|
-| M1 | Player can identify which door makes the smallest move without coaching |
-| M1 | Room similarity visibly correlates with shared prefix length |
-| M2 | Player navigates to a target ball from a partial address description |
-| M3 | Player correctly predicts Caretaker detection before it fires |
-| M3 | Player escapes by changing exactly the correct digit scale |
-| M4 | 80%+ correct proximity ranking after 10 minutes of play |
-| M5 | Player notices distances unchanged after house transformation |
-
----
-
-## Risk Notes
-
-| Risk | Mitigation in this plan |
-|------|------------------------|
-| Feels like a menu, not a world | Abstract card view is explicitly a scaffold; diegetic rendering targeted for M4 |
-| Binary notation dominates | Environmental style inheritance is the *primary* teaching mechanism; digits appear secondarily |
-| Random toggling solves everything | Limited door availability per room + noise cost + Caretaker create meaningful pressure |
-| Caretaker obscures learning | M1 has no Caretaker; M3 Caretaker has fully visible detection ball and deterministic preview |
-| Finite-approximation confusion | `AffineDoor` / contraction mechanics gated behind M5; not in core loop |
-| Euclidean false interpretation | Scale ledger uses *no angular placement*; neighborhood stack uses containment language only |

@@ -144,3 +144,10 @@ class FictionMapper:
         h = caretaker.detection_depth
         matching_traits = [self.trait_name(i, player.bit(i)) for i in range(min(h, player.depth))]
         return f"Searching: {' · '.join(matching_traits)}"
+
+    def wing_name(self, ball: Ball) -> str:
+        """Return diegetic name of an Ultrametric Ball (e.g. 'The Wooden Moon Wing')."""
+        if ball.depth == 0:
+            return "The Entire House"
+        traits = [self.trait_name(i, (ball.residue >> i) & 1) for i in range(min(ball.depth, self.depth))]
+        return f"The {' '.join(traits)}"

@@ -29,3 +29,9 @@ def test_echo_descriptions():
     assert mapper.echo_str(3, 4) == "Almost identical — a single difference"
     assert mapper.echo_str(2, 4) == "Very close — same household"
     assert mapper.echo_str(0, 4) == "Other foundation entirely"
+
+def test_wing_name():
+    from binary_house.core.ball import Ball
+    mapper = FictionMapper(depth=4)
+    ball = Ball(residue=0b0000, depth=2, total_depth=4)  # Wooden Moon Wing
+    assert mapper.wing_name(ball) == "The Wooden Moon Wing"

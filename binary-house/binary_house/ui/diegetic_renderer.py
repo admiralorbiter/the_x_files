@@ -42,12 +42,16 @@ class DiegeticRenderer:
                 self.current_transition = None
 
     def render_lineage_ribbon(self, surface: pygame.Surface, state: GameState, hovered_digit: int | None, mapper: FictionMapper, rect: pygame.Rect):
-        """Render top Lineage Ribbon with custom geometric icons."""
+        """Render top Lineage Ribbon with custom geometric icons and Seal Counter."""
         pygame.draw.rect(surface, COLOR_PANEL_BG, rect, border_radius=8)
         pygame.draw.rect(surface, COLOR_PANEL_BORDER, rect, width=1, border_radius=8)
 
         # Mode hint & title
-        lbl = self.small_font.render("HOUSE LINEAGE (F1: Archivist | F2: Math Debug)", True, COLOR_TEXT_MUTED)
+        seals_count_str = f"SEALS COLLECTED: 🌟 {len(state.seals_collected)} / {len(state.world.seal_locations)}"
+        if len(state.seals_collected) >= len(state.world.seal_locations):
+            seals_count_str += " (READY TO ESCAPE!)"
+            
+        lbl = self.small_font.render(f"HOUSE LINEAGE | {seals_count_str} (F1: Archivist | F2: Math Debug)", True, COLOR_GOLD_ACCENT if len(state.seals_collected) >= len(state.world.seal_locations) else COLOR_TEXT_MUTED)
         surface.blit(lbl, (rect.x + 16, rect.y + 6))
 
         # Render each layer box
@@ -110,7 +114,7 @@ class DiegeticRenderer:
             trait_name = mapper.trait_name(d - 1, addr.bit(d - 1))
             
             has_caretaker = (state.enable_caretaker and state.caretaker.is_detecting(addr) and d == state.caretaker.detection_depth)
-            has_exit = state.world.exit_ball.relationship(ball, state.world.exit_ball) in ("equal", "nested")
+            has_exit = Ball.relationship(ball, state.world.exit_ball) in ("equal", "nested")
 
             border_color = COLOR_ALERT_RED if has_caretaker else (COLOR_GOLD_ACCENT if has_exit else (60, 70, 90))
             pygame.draw.rect(surface, border_color, frame_rect, width=1, border_radius=4)
@@ -137,6 +141,15 @@ class DiegeticRenderer:
         y = rect.y + 34
         p_addr = state.player_address
 
+        # Active Sound Regions echo
+        if state.sound_regions:
+            for s in state.sound_regions:
+                sound_wing = mapper.wing_name(s.ball)
+                fade_str = " (fading)" if s.age > 1 else ""
+                txt = self.small_font.render(f"👂 Noise in {sound_wing}{fade_str}", True, COLOR_GOLD_ACCENT)
+                surface.blit(txt, (rect.x + 12, y))
+                y += 22
+
         # Caretaker echo
         if state.enable_caretaker:
             c_str = mapper.caretaker_recognition_str(state.caretaker, p_addr)
@@ -147,18 +160,24 @@ class DiegeticRenderer:
             surface.blit(txt, (rect.x + 12, y))
             y += 24
 
-        # Seals echoes
+        # Seals echoes (always show all 3 seals)
         for idx, s_addr in enumerate(state.world.seal_locations):
-            if idx not in state.seals_collected:
+            if idx in state.seals_collected:
+                txt = self.small_font.render(f"🌟 Seal #{idx+1}: ✓ COLLECTED", True, COLOR_GOLD_ACCENT)
+            else:
                 level = distance_level(p_addr, s_addr)
                 echo_text = mapper.echo_str(level, state.world.depth)
                 txt = self.small_font.render(f"🌟 Seal #{idx+1}: {echo_text}", True, COLOR_CYAN_ACCENT)
-                surface.blit(txt, (rect.x + 12, y))
-                y += 24
+            surface.blit(txt, (rect.x + 12, y))
+            y += 24
 
         # Exit echo
         if state.world.exit_ball.contains(p_addr):
-            txt = self.small_font.render("🚪 Way Out: INSIDE EXIT WING!", True, COLOR_GOLD_ACCENT)
+            if len(state.seals_collected) >= len(state.world.seal_locations):
+                txt = self.small_font.render("🚪 Way Out: INSIDE EXIT WING! (ESCAPED)", True, COLOR_GOLD_ACCENT)
+            else:
+                needed = len(state.world.seal_locations) - len(state.seals_collected)
+                txt = self.small_font.render(f"🚪 Way Out: HERE (Need {needed} more seals)", True, COLOR_CYAN_ACCENT)
             surface.blit(txt, (rect.x + 12, y))
         else:
             txt = self.small_font.render("🚪 Way Out: In Moon Wing", True, COLOR_TEXT_MUTED)

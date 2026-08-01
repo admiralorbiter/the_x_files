@@ -12,6 +12,16 @@ The prototype is both a game and a mathematical interface-design experiment. Its
 
 ---
 
+## Designer's Notes & Reflections
+
+> *"This is one of the more interesting experiments because it allows you to construct really complex puzzles built around mathematical mechanics we already understand. You don't have to worry about whether the underlying puzzle mechanics will 'work out' in the end — you build around math you already know is rigorous, and then explore the downstream design effects from there."*
+
+- **Intuition & Learning Curve**: The core mechanics present a fascinating puzzle space. Reminiscent in spirit of games like *Blue House*, there is huge potential to build player intuition around resemblance and non-Euclidean distance through perception, consequence, and story.
+- **Narrative & Environmental Depth**: Further iteration will involve playing through scenarios extensively, deepening the story and lore around the house, and refining how spatial memory and lineage clues communicate the 2-adic structure naturally.
+- **Formally Grounded Level Design**: Because 2-adic ultrametric space guarantees rigid invariant properties (strong triangle inequality, isometric affine transformations, strictly nested neighborhood balls), puzzle logic is mathematically guaranteed to be consistent. The design challenge shifts entirely to perceptual presentation: guiding players to develop an intuitive mental model of ultrametric space through play.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -116,6 +126,7 @@ binary-house/
 | **Milestone 0: Mathematical Kernel** | ✅ **COMPLETED** | Exhaustive 262k strong triangle inequality check & ball topology tests passing. |
 | **Milestone 1: Navigation Instrument** | ✅ **COMPLETED** | 16-room world, procedural visual layers, additive audio synthesis. |
 | **Fiction Shell ("The House That Remembers")** | ✅ **COMPLETED** | Diegetic view, custom geometric lineage icons, House Memory nested frames, Echoes panel, door previews, F1/F2 mode toggle, tutorial sequence. |
-| **Milestone 2 & 3: Deep Stealth Loop** | 🟡 **FOUNDATION BUILT** | Caretaker AI search, sound expansion, seal relational clues, chalking & lures ready for expansion. |
-| **Milestone 4: Eight Rooms Deep** | ⏳ **UPCOMING** | Full 256-room 8-bit scenarios & rich visual/audio pass. |
-| **Milestone 5: Arithmetic Mutation** | ⏳ **UPCOMING** | Affine isometry rearrangement ($x \mapsto 3x + 5 \pmod{256}$) & 2x contraction elevator. |
+| **Milestone 2: Deep Stealth Loop** | ✅ **COMPLETED** | Caretaker AI search, frustration widening, relational seal clues, victory/capture screens. |
+| **Milestone 3: Distraction Tools** | ✅ **COMPLETED** | Quiet Steps, Chalking, Lineage Lures (`LureRegion`), Branch Keys. |
+| **Milestone 4: Eight Rooms Deep** | ✅ **COMPLETED** | Full 256-room 8-bit world, 5 multi-scale seals, Caretaker Heat System. |
+| **Milestone 5: Arithmetic Mutation** | ✅ **COMPLETED** | Affine isometry house rearrangement ($x \mapsto 3x + 1$) & $2\times$ contraction elevator. |
