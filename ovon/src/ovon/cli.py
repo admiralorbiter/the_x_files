@@ -2,12 +2,14 @@ import os
 import sys
 import subprocess
 import click
+import numpy as np
 
 from ovon.config import ProjectConfig
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_kc_parks_overpass, fetch_gbif_kc_birds
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
+from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
 from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
@@ -19,6 +21,60 @@ from ovon.routing.optimizer import (
 def cli():
     """Optimal Volunteer Observation Network (OVON) CLI"""
     pass
+
+@cli.command(name="model-evaluate")
+@click.option("--n-samples", default=100, help="Number of training samples.")
+@click.option("--n-bootstrap", default=15, help="Number of bootstrap models.")
+def model_evaluate(n_samples: int, n_bootstrap: int):
+    """Fit species encounter models and evaluate out-of-fold spatial CV metrics."""
+    dataset = build_kc_real_dataset()
+    rng = np.random.default_rng(42)
+
+    click.echo(f"=== Milestone 4: Species Encounter Model Evaluation ===")
+    click.echo(f"Focal Portfolio Size: {dataset.n_species} species")
+
+    # Generate synthetic training features and binary detection labels for each species
+    coords = np.zeros((n_samples, 2))
+    X = np.zeros((n_samples, 7))
+
+    for i in range(n_samples):
+        lat = dataset.candidate_sites[i % len(dataset.candidate_sites)].lat
+        lon = dataset.candidate_sites[i % len(dataset.candidate_sites)].lon
+        coords[i] = [lat, lon]
+        hab = dataset.candidate_sites[i % len(dataset.candidate_sites)].habitat
+        week = rng.integers(1, 53)
+        X[i] = extract_feature_vector(hab, week)
+
+    sb_cv = SpatialBlockCV()
+    splits = sb_cv.split(coords)
+    click.echo(f"Spatial Block Cross-Validation Splits: {len(splits)} quadrants")
+
+    for sp_idx, sp_name in enumerate(dataset.species_names):
+        true_p = dataset.candidate_sites[0].true_p[sp_idx] if len(dataset.candidate_sites[0].true_p) > sp_idx else 0.4
+        y = rng.binomial(1, true_p, size=n_samples)
+
+        briers = []
+        aucs = []
+
+        for train_idx, val_idx in splits:
+            model = CalibratedTreeEncounterModel(species_name=sp_name)
+            model.fit(X[train_idx], y[train_idx])
+            metrics = model.evaluate(X[val_idx], y[val_idx])
+            briers.append(metrics.brier_score)
+            aucs.append(metrics.auc_roc)
+
+        click.echo(f"  - Species: {sp_name:<25} | Out-of-Fold Brier: {np.mean(briers):.4f} | Spatial AUC-ROC: {np.mean(aucs):.3f}")
+
+    click.echo("\nFitting Spatial-Temporal Bootstrap Ensemble...")
+    bootstrap_engine = BootstrapEnsembleUncertainty(n_bootstrap=n_bootstrap)
+    sp_name = dataset.species_names[0]
+    y_sp = rng.binomial(1, 0.4, size=n_samples)
+    ensemble = bootstrap_engine.fit_ensemble(sp_name, X, y_sp)
+    
+    X_candidates = X[:5]
+    means, qbc_scores = bootstrap_engine.predict_ensemble(ensemble, X_candidates)
+    click.echo(f"Ensemble fitted with {len(ensemble)} bootstrap models for '{sp_name}'.")
+    click.echo(f"Sample Candidate Predictions: Mean pi = {np.mean(means):.3f}, QBC Disagreement = {np.mean(qbc_scores):.4f}")
 
 @cli.command(name="dashboard")
 @click.option("--port", default=8501, help="Port to run Streamlit dashboard server on.")
