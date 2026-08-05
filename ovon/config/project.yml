@@ -1,0 +1,27 @@
+project:
+  name: ovon
+  pilot_region: "Greater Kansas City"
+  center:
+    latitude: 39.0997
+    longitude: -94.5786
+  radius_km: 100
+
+grid:
+  type: equal_area_square
+  resolution_km: 3
+  habitat_buffers_m: [500, 1500, 3000]
+
+field_protocol:
+  stops_per_route: [3, 5]
+  minutes_per_stop: 10
+  route_budgets_minutes: [45, 90, 180]
+
+model:
+  target: encounter_rate
+  bootstrap_models: 30
+
+synthetic:
+  n_cells: 100
+  n_candidate_sites: 40
+  n_species: 8
+  random_seed: 42
