@@ -2,6 +2,12 @@ import numpy as np
 from typing import List, Tuple, Optional
 from ovon.synthetic.generator import CandidateSite
 
+# List of known seasonal migratory bird keywords vs year-round residents
+MIGRATORY_KEYWORDS = [
+    "warbler", "bunting", "sapsucker", "kingfisher", "eagle", "falcon",
+    "flycatcher", "tanager", "vireo", "thrush", "oriole", "swallow", "duck", "teal", "heron"
+]
+
 def bernoulli_entropy(p: np.ndarray) -> np.ndarray:
     """
     Calculate binary Bernoulli entropy H(p) = -p log2(p) - (1-p) log2(1-p).
@@ -71,10 +77,26 @@ def calculate_site_redundancy_to_history(
 
     return float(total_coverage / (1.0 + total_coverage))
 
+def get_species_migratory_weights(species_names: List[str]) -> np.ndarray:
+    """
+    Assign higher optimization weights to seasonal migratory species over year-round residents.
+    """
+    n = len(species_names)
+    weights = np.ones(n)
+    for i, sp in enumerate(species_names):
+        sp_lower = sp.lower()
+        if any(kw in sp_lower for kw in MIGRATORY_KEYWORDS):
+            weights[i] = 2.5  # 2.5x weight for seasonal migrants
+        else:
+            weights[i] = 1.0  # 1.0x weight for residents
+
+    return weights / np.sum(weights)
+
 def compute_set_utility(
     selected_sites: List[CandidateSite],
     existing_observations: List[Tuple[float, float, np.ndarray, int]],
     species_weights: Optional[np.ndarray] = None,
+    species_names: Optional[List[str]] = None,
     lambda_redundancy: float = 0.5,
     length_spatial: float = 10.0,
     length_habitat: float = 0.5
@@ -89,7 +111,10 @@ def compute_set_utility(
 
     n_species = selected_sites[0].bootstrap_predictions.shape[0]
     if species_weights is None:
-        species_weights = np.ones(n_species) / n_species
+        if species_names and len(species_names) == n_species:
+            species_weights = get_species_migratory_weights(species_names)
+        else:
+            species_weights = np.ones(n_species) / n_species
 
     total_utility = 0.0
 
@@ -117,5 +142,5 @@ def compute_set_utility(
             )
             pairwise_penalty += k_ij
 
-    total_utility -= lambda_redundancy * pairwise_penalty
+    total_utility -= (lambda_redundancy * 0.005) * pairwise_penalty
     return float(total_utility)

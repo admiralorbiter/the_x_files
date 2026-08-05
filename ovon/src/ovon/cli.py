@@ -1,8 +1,13 @@
+import os
+import sys
+import subprocess
 import click
-from typing import Optional
 
 from ovon.config import ProjectConfig
 from ovon.synthetic.generator import generate_synthetic_dataset
+from ovon.data.fetch_public import build_kc_real_dataset, fetch_kc_parks_overpass, fetch_gbif_kc_birds
+from ovon.features.grid import EqualAreaGrid
+from ovon.features.redundancy import RedundancyAtlas
 from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
@@ -14,6 +19,72 @@ from ovon.routing.optimizer import (
 def cli():
     """Optimal Volunteer Observation Network (OVON) CLI"""
     pass
+
+@cli.command(name="dashboard")
+@click.option("--port", default=8501, help="Port to run Streamlit dashboard server on.")
+def dashboard(port: int):
+    """Launch the interactive Streamlit Web Research Dashboard."""
+    app_path = os.path.join(os.path.dirname(__file__), "app.py")
+    click.echo(f"Launching OVON Interactive Web Research Dashboard on port {port}...")
+    cmd = [sys.executable, "-m", "streamlit", "run", app_path, "--server.port", str(port)]
+    subprocess.run(cmd)
+
+@cli.command(name="fetch-kc")
+def fetch_kc():
+    """Download and report real Kansas City public parks and GBIF bird records."""
+    click.echo("Fetching OpenStreetMap Kansas City public parks...")
+    parks = fetch_kc_parks_overpass()
+    click.echo(f"Retrieved {len(parks)} real public parks / nature preserves in Greater Kansas City.")
+    for p in parks[:5]:
+        click.echo(f"  - {p['name']} ({p['type']}) at lat={p['lat']:.4f}, lon={p['lon']:.4f}")
+
+    click.echo("\nFetching GBIF species observations for Kansas City...")
+    birds = fetch_gbif_kc_birds()
+    click.echo(f"Retrieved {len(birds)} species records in Kansas City bounding box.")
+    unique_species = list(set([b['species'] for b in birds if b.get('species')]))
+    click.echo(f"Sample Species Portfolio ({len(unique_species)} species): {', '.join(unique_species[:6])}")
+
+@cli.command(name="grid-build")
+@click.option("--radius", default=50.0, help="Pilot region radius in km.")
+@click.option("--res", default=3.0, help="Grid resolution in km.")
+def grid_build(radius: float, res: float):
+    """Generate and display projected 3 km equal-area spatial grid for Kansas City."""
+    grid = EqualAreaGrid(radius_km=radius, resolution_km=res)
+    click.echo("=== Kansas City Equal-Area Spatial Grid ===")
+    click.echo(f"Center Coordinate: ({grid.center_lat:.4f}, {grid.center_lon:.4f})")
+    click.echo(f"Radius: {grid.radius_km:.1f} km")
+    click.echo(f"Resolution: {grid.resolution_km:.1f} km (cell area ~{res**2:.1f} km²)")
+    click.echo(f"Grid Dimensions: {grid.n_rows} rows x {grid.n_cols} cols")
+    click.echo(f"Total Spatial Grid Cells: {grid.total_cells}")
+    click.echo(f"Bounding Box: Lat [{grid.min_lat:.4f}, {grid.max_lat:.4f}], Lon [{grid.min_lon:.4f}, {grid.max_lon:.4f}]")
+
+@cli.command(name="report-redundancy")
+@click.option("--week", default=18, help="Target week (e.g. spring migration week 18).")
+@click.option("--top-k", default=5, help="Number of under-sampled cells to report.")
+def report_redundancy(week: int, top_k: int):
+    """Generate spatiotemporal redundancy atlas and rank under-sampled grid cells."""
+    grid = EqualAreaGrid()
+    atlas = RedundancyAtlas(grid)
+
+    dataset = build_kc_real_dataset()
+    obs_list = []
+    for obs_tuple in dataset.existing_observations:
+        obs_list.append({
+            "lat": grid.center_lat + (obs_tuple[1] / 111.0),
+            "lon": grid.center_lon + (obs_tuple[0] / (111.0 * 0.77)),
+            "week": obs_tuple[3],
+            "observer_id": "obs_sample",
+            "habitat": obs_tuple[2]
+        })
+
+    atlas.ingest_observations(obs_list)
+    top_undersampled = atlas.get_top_undersampled_cells(week=week, top_k=top_k)
+
+    click.echo(f"=== Kansas City Redundancy Atlas (Week {week}) ===")
+    click.echo(f"Top {top_k} Priority Under-Observed Spatial Cells:")
+    for rank, (cell, metric) in enumerate(top_undersampled, 1):
+        click.echo(f"  {rank}. Cell #{cell.cell_id} (Row {cell.row}, Col {cell.col}) - Center: ({cell.center_lat:.4f}, {cell.center_lon:.4f})")
+        click.echo(f"     Checklists: {metric.n_checklists}, Coverage Score: {metric.effective_coverage:.4f}, Redundancy Index: {metric.redundancy_index:.4f}")
 
 @cli.command(name="synthetic-generate")
 @click.option("--n-sites", default=40, help="Number of candidate observation sites.")
@@ -31,9 +102,14 @@ def synthetic_generate(n_sites: int, n_species: int, seed: int):
 @click.option("--budget", default=90.0, help="Total route budget in minutes.")
 @click.option("--start-site", default=0, help="Start site ID.")
 @click.option("--n-sites", default=40, help="Number of candidate sites.")
-def optimize_route(budget: float, start_site: int, n_sites: int):
-    """Run OVON route optimizer on synthetic dataset."""
-    dataset = generate_synthetic_dataset(n_sites=n_sites)
+@click.option("--real-kc", is_flag=True, help="Use real Kansas City public park locations.")
+def optimize_route(budget: float, start_site: int, n_sites: int, real_kc: bool):
+    """Run OVON route optimizer on synthetic or real Kansas City dataset."""
+    if real_kc:
+        dataset = build_kc_real_dataset()
+        click.echo("Loaded real Kansas City public parks & driving travel matrix.")
+    else:
+        dataset = generate_synthetic_dataset(n_sites=n_sites)
     
     greedy_sol = build_greedy_route(dataset, start_site_id=start_site, budget_minutes=budget)
     refined_sol = refine_route_local_search(greedy_sol, dataset)
@@ -47,12 +123,25 @@ def optimize_route(budget: float, start_site: int, n_sites: int):
     click.echo(f"Total Route Time: {refined_sol.total_time_minutes:.1f} min")
     click.echo(f"Multi-Species Utility: {refined_sol.utility:.4f}")
 
+    if real_kc:
+        click.echo("\nRecommended Real Kansas City Route Itinerary:")
+        for idx, site in enumerate(refined_sol.sites):
+            park_name = getattr(site, "park_name", f"Site {site.site_id}")
+            lat = getattr(site, "lat", 0.0)
+            lon = getattr(site, "lon", 0.0)
+            click.echo(f"  Stop {idx+1}: {park_name} (Lat: {lat:.4f}, Lon: {lon:.4f}) - 10 min stationary survey")
+
 @cli.command(name="evaluate-baseline")
 @click.option("--budget", default=90.0, help="Total route budget in minutes.")
+@click.option("--real-kc", is_flag=True, help="Use real Kansas City public park locations.")
 @click.option("--seed", default=42, help="Random seed.")
-def evaluate_baseline(budget: float, seed: int):
+def evaluate_baseline(budget: float, real_kc: bool, seed: int):
     """Compare OVON optimizer against Random and Hotspot baselines."""
-    dataset = generate_synthetic_dataset(n_sites=40, seed=seed)
+    if real_kc:
+        dataset = build_kc_real_dataset(seed=seed)
+        click.echo("Loaded real Kansas City public parks & driving travel matrix.")
+    else:
+        dataset = generate_synthetic_dataset(n_sites=40, seed=seed)
 
     rand_sol = build_random_route(dataset, start_site_id=0, budget_minutes=budget, seed=seed)
     hot_sol = build_hotspot_route(dataset, start_site_id=0, budget_minutes=budget)
