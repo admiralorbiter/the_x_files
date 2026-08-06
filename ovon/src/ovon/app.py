@@ -108,7 +108,7 @@ def get_optimized_route(start_idx, budget, lam, mode_name):
 
 ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode)
 
-# Fetch OSRM Polyline & Turn-by-Turn Steps
+# Fetch OSRM Polyline & Turn-by-Turn Steps (Append origin for closed-loop return leg)
 stop_coords = []
 center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0854)
 center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5857)
@@ -118,16 +118,20 @@ for s in ovon_sol.sites:
     lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
     stop_coords.append((lat, lon))
 
+closed_loop_coords = list(stop_coords)
+if len(stop_coords) > 1:
+    closed_loop_coords.append(stop_coords[0])
+
 @st.cache_data
 def get_osrm_details(coords, is_urban):
     profile_type = "walking" if is_urban else "driving"
     return fetch_osrm_multistop_route(coords, profile=profile_type)
 
-osrm_res = get_osrm_details(stop_coords, is_urban_pedestrian)
+osrm_res = get_osrm_details(closed_loop_coords, is_urban_pedestrian)
 
 # Tabs Layout
 tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
-    "🗺️ Route Map & OSRM Road Layer",
+    "🗺️ Route Map & OSRM Path Layer",
     "🦅 Species Analytics & GBIF Records",
     "📊 Redundancy Atlas & Spatial Grid",
     "🤖 Model Calibration & Out-of-Fold CV",
@@ -138,18 +142,41 @@ tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
 SPECIES_COLORS = ["#e31a1c", "#1f78b4", "#33a02c", "#ff7f00", "#6a3d9a", "#a6cee3", "#b2df8a", "#fdbf6f"]
 species_color_map = {sp: SPECIES_COLORS[idx % len(SPECIES_COLORS)] for idx, sp in enumerate(all_gbif_species)}
 
-# --- TAB 1: ROUTE MAP & OSRM ROAD LAYER ---
+# --- TAB 1: ROUTE MAP & OSRM PATH LAYER ---
 with tab_map:
+    # Mode & Provenance Badge
+    prov_text = "SIMULATED ECOLOGY · REAL GEOGRAPHY" if use_real_kc or is_urban_pedestrian else "SYNTHETIC BENCHMARK"
+    st.info(f"📍 **Provenance Badge**: `{prov_text}` — Mode: **{'Pedestrian Walking Circuit' if is_urban_pedestrian else 'Driving Route Loop'}**")
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Route Time", f"{ovon_sol.total_time_minutes:.1f} min", f"Budget: {budget_min} min")
-    col2.metric("Driving Travel Time", f"{osrm_res['duration_min']:.1f} min" if not osrm_res['is_fallback'] else f"{ovon_sol.total_travel_minutes:.1f} min", f"Road Dist: {osrm_res['distance_km']:.1f} km")
+    travel_label = "Walking Travel Time" if is_urban_pedestrian else "Driving Travel Time"
+    network_label = "Walking Dist" if is_urban_pedestrian else "Road Dist"
+
+    col1.metric("Total Circuit Time", f"{ovon_sol.total_time_minutes:.1f} min", f"Budget: {budget_min} min")
+    col2.metric(travel_label, f"{osrm_res['duration_min']:.1f} min" if not osrm_res['is_fallback'] else f"{ovon_sol.total_travel_minutes:.1f} min", f"{network_label}: {osrm_res['distance_km']:.1f} km")
     col3.metric("Stationary Survey Time", f"{ovon_sol.total_observation_minutes:.1f} min", f"{len(ovon_sol.sites)} Stops")
     col4.metric("Multi-Species Utility", f"{ovon_sol.utility:.4f}", f"Profile: {observer_profile}")
 
+    # Explicit Cost Breakdown Reconciliation Table
+    cbd = ovon_sol.cost_breakdown
+    if cbd:
+        with st.expander("⏱️ Itemized Route Cost Decomposition & Time Reconciliation", expanded=False):
+            travel_icon = "🚶" if is_urban_pedestrian else "🚗"
+            cost_df = pd.DataFrame([
+                {"Component": f"{travel_icon} Inter-Stop Travel Time", "Duration (min)": f"{cbd.inter_stop_travel_minutes:.1f} min", "Notes": "Travel between candidate sites"},
+                {"Component": "🔄 Closed-Loop Return Leg to Origin Hub", "Duration (min)": f"{cbd.return_leg_minutes:.1f} min", "Notes": "Circuit leg back to starting hub"},
+                {"Component": "🔭 Stationary Observation Time", "Duration (min)": f"{cbd.stationary_observation_minutes:.1f} min", "Notes": f"{len(ovon_sol.sites)} stops @ site survey duration"},
+                {"Component": "🎒 Access & Protocol Setup Buffer", "Duration (min)": f"{cbd.access_buffer_minutes:.1f} min", "Notes": f"3.0 min buffer per stop ({len(ovon_sol.sites)} stops)"},
+                {"Component": "⏱️ Total Reconciled Circuit Time", "Duration (min)": f"{cbd.total_minutes:.1f} min", "Notes": f"Must stay within {budget_min} min budget"}
+            ])
+            st.table(cost_df)
+
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="OpenStreetMap")
 
-    # Grid Heatmap Layer Overlay
+    # Grid Heatmap Layer Overlay Notice
     if heatmap_layer != "None":
+        if use_real_kc or is_urban_pedestrian:
+            st.caption(f"ℹ️ Note: Displaying habitat encounter surface for `{heatmap_layer}` overlay in Geographic Demo mode.")
         grid = EqualAreaGrid(radius_km=25.0, resolution_km=8.0)
         for cell in grid.get_all_cells():
             # Calculate deterministic metrics based on candidate sites within cell

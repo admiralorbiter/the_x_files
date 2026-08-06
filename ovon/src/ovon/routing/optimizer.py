@@ -6,6 +6,14 @@ from ovon.synthetic.generator import CandidateSite, SyntheticDataset
 from ovon.utility.metrics import compute_set_utility, calculate_qbc_disagreement
 
 @dataclass
+class RouteCostBreakdown:
+    inter_stop_travel_minutes: float
+    return_leg_minutes: float
+    stationary_observation_minutes: float
+    access_buffer_minutes: float
+    total_minutes: float
+
+@dataclass
 class RouteSolution:
     sites: List[CandidateSite]
     stop_ids: List[int]
@@ -14,6 +22,7 @@ class RouteSolution:
     total_time_minutes: float
     utility: float
     budget_minutes: float
+    cost_breakdown: Optional[RouteCostBreakdown] = None
 
 def calculate_route_travel_time(
     stop_ids: List[int],
@@ -30,6 +39,34 @@ def calculate_route_travel_time(
         travel += travel_matrix[stop_ids[-1], stop_ids[0]]
     return float(travel)
 
+def calculate_route_cost_breakdown(
+    stops: List[CandidateSite],
+    stop_ids: List[int],
+    travel_matrix: np.ndarray,
+    return_to_hub: bool = True,
+    access_buffer_minutes: float = 3.0
+) -> RouteCostBreakdown:
+    """Calculate explicit cost breakdown across inter-stop travel, return leg, stationary obs, and access buffers."""
+    inter_travel = 0.0
+    for i in range(len(stop_ids) - 1):
+        inter_travel += float(travel_matrix[stop_ids[i], stop_ids[i+1]])
+    
+    return_leg = 0.0
+    if return_to_hub and len(stop_ids) > 1:
+        return_leg = float(travel_matrix[stop_ids[-1], stop_ids[0]])
+
+    stat_obs = sum(float(s.observation_minutes) for s in stops)
+    access_buf = sum(float(access_buffer_minutes) for s in stops)
+
+    total_m = inter_travel + return_leg + stat_obs + access_buf
+    return RouteCostBreakdown(
+        inter_stop_travel_minutes=inter_travel,
+        return_leg_minutes=return_leg,
+        stationary_observation_minutes=stat_obs,
+        access_buffer_minutes=access_buf,
+        total_minutes=total_m
+    )
+
 def calculate_route_total_time(
     stops: List[CandidateSite],
     stop_ids: List[int],
@@ -38,9 +75,8 @@ def calculate_route_total_time(
     access_buffer_minutes: float = 3.0
 ) -> Tuple[float, float, float]:
     """Calculate (travel_minutes, obs_minutes, total_minutes) with parking/access buffers."""
-    travel = calculate_route_travel_time(stop_ids, travel_matrix, return_to_hub=return_to_hub)
-    obs = sum(s.observation_minutes + access_buffer_minutes for s in stops)
-    return travel, obs, travel + obs
+    cbd = calculate_route_cost_breakdown(stops, stop_ids, travel_matrix, return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes)
+    return cbd.inter_stop_travel_minutes + cbd.return_leg_minutes, cbd.stationary_observation_minutes + cbd.access_buffer_minutes, cbd.total_minutes
 
 def filter_valid_candidates(dataset: SyntheticDataset) -> List[CandidateSite]:
     """Filter out non-public or unsafe candidate sites."""
@@ -122,7 +158,7 @@ def build_greedy_route(
         else:
             break
 
-    travel_m, obs_m, total_m = calculate_route_total_time(
+    cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
@@ -130,11 +166,12 @@ def build_greedy_route(
     return RouteSolution(
         sites=current_stops,
         stop_ids=current_ids,
-        total_travel_minutes=travel_m,
-        total_observation_minutes=obs_m,
-        total_time_minutes=total_m,
+        total_travel_minutes=cbd.inter_stop_travel_minutes + cbd.return_leg_minutes,
+        total_observation_minutes=cbd.stationary_observation_minutes + cbd.access_buffer_minutes,
+        total_time_minutes=cbd.total_minutes,
         utility=current_utility,
-        budget_minutes=budget_minutes
+        budget_minutes=budget_minutes,
+        cost_breakdown=cbd
     )
 
 def refine_route_local_search(
@@ -181,15 +218,15 @@ def refine_route_local_search(
                 if improved:
                     break
 
-        # 2. Try inserting an unvisited site
-        visited_ids = set(current_ids)
-        for site_id, candidate in site_dict.items():
-            if site_id in visited_ids:
-                continue
+        n = len(current_ids)
+        if n < 3:
+            break
 
-            for pos in range(1, len(current_ids) + 1):
-                test_ids = current_ids[:pos] + [site_id] + current_ids[pos:]
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                test_ids = current_ids[:i] + list(reversed(current_ids[i:j+1])) + current_ids[j+1:]
                 test_stops = [site_dict[sid] for sid in test_ids]
+
                 t_m, o_m, tot_m = calculate_route_total_time(
                     test_stops, test_ids, dataset.travel_time_matrix,
                     return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
@@ -206,7 +243,7 @@ def refine_route_local_search(
             if improved:
                 break
 
-    t_m, o_m, tot_m = calculate_route_total_time(
+    cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
@@ -215,11 +252,12 @@ def refine_route_local_search(
     return RouteSolution(
         sites=current_stops,
         stop_ids=current_ids,
-        total_travel_minutes=t_m,
-        total_observation_minutes=o_m,
-        total_time_minutes=tot_m,
+        total_travel_minutes=cbd.inter_stop_travel_minutes + cbd.return_leg_minutes,
+        total_observation_minutes=cbd.stationary_observation_minutes + cbd.access_buffer_minutes,
+        total_time_minutes=cbd.total_minutes,
         utility=final_u,
-        budget_minutes=budget
+        budget_minutes=budget,
+        cost_breakdown=cbd
     )
 
 # --- Baseline Generators ---
@@ -260,7 +298,7 @@ def build_random_route(
             current_stops.append(candidate)
             visited_ids.add(sid)
 
-    t_m, o_m, tot_m = calculate_route_total_time(
+    cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
@@ -269,11 +307,12 @@ def build_random_route(
     return RouteSolution(
         sites=current_stops,
         stop_ids=current_ids,
-        total_travel_minutes=t_m,
-        total_observation_minutes=o_m,
-        total_time_minutes=tot_m,
+        total_travel_minutes=cbd.inter_stop_travel_minutes + cbd.return_leg_minutes,
+        total_observation_minutes=cbd.stationary_observation_minutes + cbd.access_buffer_minutes,
+        total_time_minutes=cbd.total_minutes,
         utility=u,
-        budget_minutes=budget_minutes
+        budget_minutes=budget_minutes,
+        cost_breakdown=cbd
     )
 
 def build_hotspot_route(
@@ -313,7 +352,7 @@ def build_hotspot_route(
             current_stops.append(candidate)
             visited_ids.add(sid)
 
-    t_m, o_m, tot_m = calculate_route_total_time(
+    cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
@@ -322,9 +361,10 @@ def build_hotspot_route(
     return RouteSolution(
         sites=current_stops,
         stop_ids=current_ids,
-        total_travel_minutes=t_m,
-        total_observation_minutes=o_m,
-        total_time_minutes=tot_m,
+        total_travel_minutes=cbd.inter_stop_travel_minutes + cbd.return_leg_minutes,
+        total_observation_minutes=cbd.stationary_observation_minutes + cbd.access_buffer_minutes,
+        total_time_minutes=cbd.total_minutes,
         utility=u,
-        budget_minutes=budget_minutes
+        budget_minutes=budget_minutes,
+        cost_breakdown=cbd
     )

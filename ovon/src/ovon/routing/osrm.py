@@ -15,14 +15,21 @@ def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) ->
 
 def fallback_geodesic_route(
     start_lat: float, start_lon: float, end_lat: float, end_lon: float,
-    speed_kmh: float = 40.0, winding_factor: float = 1.3
+    speed_kmh: float = 40.0, winding_factor: float = 1.3,
+    profile: str = "driving"
 ) -> Dict[str, Any]:
     """Fallback route estimation if OSRM service is unreachable."""
+    if profile in ["walking", "foot"]:
+        speed_kmh = 4.5
+        winding_factor = 1.25
+        action_verb = "Walk"
+    else:
+        action_verb = "Drive"
+
     dist_direct = haversine_distance_km(start_lat, start_lon, end_lat, end_lon)
     dist_road = dist_direct * winding_factor
     duration_min = (dist_road / speed_kmh) * 60.0
 
-    # Linearly interpolate 10 intermediate points
     lats = np.linspace(start_lat, end_lat, 10)
     lons = np.linspace(start_lon, end_lon, 10)
     polyline = [[float(la), float(lo)] for la, lo in zip(lats, lons)]
@@ -32,7 +39,7 @@ def fallback_geodesic_route(
         "distance_km": dist_road,
         "polyline_coords": polyline,
         "steps": [
-            f"Drive from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via local roads (~{dist_road:.1f} km)"
+            f"{action_verb} from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via pedestrian path network (~{dist_road:.1f} km)" if profile == "walking" else f"Drive from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via local roads (~{dist_road:.1f} km)"
         ],
         "is_fallback": True
     }

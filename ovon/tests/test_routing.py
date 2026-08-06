@@ -61,3 +61,18 @@ def test_ovon_policy_outperforms_random():
     ovon_route = refine_route_local_search(greedy_route, dataset)
 
     assert ovon_route.utility > rand_route.utility
+
+def test_route_cost_breakdown_reconciliation():
+    dataset = generate_synthetic_dataset(n_sites=20, seed=42)
+    greedy = build_greedy_route(dataset, start_site_id=0, budget_minutes=90.0, return_to_hub=True)
+    cbd = greedy.cost_breakdown
+
+    assert cbd is not None
+    reconciled_sum = (
+        cbd.inter_stop_travel_minutes +
+        cbd.return_leg_minutes +
+        cbd.stationary_observation_minutes +
+        cbd.access_buffer_minutes
+    )
+    assert abs(reconciled_sum - cbd.total_minutes) < 1e-5
+    assert abs(cbd.total_minutes - greedy.total_time_minutes) < 1e-5
