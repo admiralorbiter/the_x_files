@@ -48,21 +48,33 @@ The best birding spot is rarely the best scientific sampling location. Highly po
 
 ## 💻 Quick Start & Running locally
 
+Make sure you are in the `ovon` project directory (`cd ovon`):
+
+```bash
+cd ovon
+```
+
 ### 1. Run Automated Test Suite (24 Passing Tests)
 ```bash
 cmd /c "set PYTHONPATH=src && pytest -v"
 ```
 
 ### 2. Launch Interactive Web Dashboard
-```bash
-py -3.12 -m streamlit run src/ovon/app.py --server.port 8501
-```
+- **From inside `ovon/` directory:**
+  ```bash
+  py -3.12 -m streamlit run src/ovon/app.py --server.port 8501
+  ```
+- **From the workspace root (`the_x_files`):**
+  ```bash
+  cmd /c "set PYTHONPATH=ovon\src && py -3.12 -m streamlit run ovon/src/ovon/app.py --server.port 8501"
+  ```
 Open your browser at **[http://localhost:8501](http://localhost:8501)**.
 
 ### 3. CLI Commands
 ```bash
-# Fetch real Kansas City public parks, fountains, and GBIF species records
+# From inside ovon/
 python src/ovon/cli.py fetch-kc
+
 
 # Build projected 3 km equal-area spatial grid
 python src/ovon/cli.py grid-build

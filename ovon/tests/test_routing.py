@@ -18,6 +18,18 @@ def test_route_budget_constraint():
     refined = refine_route_local_search(route, dataset)
     assert refined.total_time_minutes <= budget + 1e-4
 
+def test_route_return_to_hub_budget():
+    dataset = generate_synthetic_dataset(n_sites=20, seed=42)
+    budget = 75.0
+    route = build_greedy_route(dataset, start_site_id=0, budget_minutes=budget, return_to_hub=True)
+    
+    assert route.total_time_minutes <= budget + 1e-4
+    if len(route.stop_ids) > 1:
+        # Check return leg travel time is included
+        start_id = route.stop_ids[0]
+        end_id = route.stop_ids[-1]
+        assert dataset.travel_time_matrix[end_id, start_id] > 0.0
+
 def test_excluded_sites_never_selected():
     dataset = generate_synthetic_dataset(n_sites=20, seed=42)
     # Mark site 1 as private and site 2 as unsafe

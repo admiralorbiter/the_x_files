@@ -29,6 +29,15 @@ def extract_feature_vector(habitat: np.ndarray, week: int, duration_min: float =
         duration_min / 60.0, distance_km / 10.0
     ])
 
+class ConstantPrevalenceModel:
+    """Fallback model for species with insufficient class support (e.g. < 2 positive or negative samples)."""
+    def __init__(self, prevalence: float):
+        self.prevalence = float(np.clip(prevalence, 0.001, 0.999))
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        n = X.shape[0]
+        return np.column_stack([np.full(n, 1.0 - self.prevalence), np.full(n, self.prevalence)])
+
 class CalibratedTreeEncounterModel:
     """
     Calibrated Random Forest model for binary species encounter probability y ~ Bernoulli(pi).
@@ -39,26 +48,31 @@ class CalibratedTreeEncounterModel:
         self.species_name = species_name
         self.n_estimators = n_estimators
         self.random_state = random_state
-        self.model: Optional[CalibratedClassifierCV] = None
+        self.model: Optional[Any] = None
         self.is_fitted = False
+        self.is_constant_fallback = False
 
     def fit(self, X: np.ndarray, y: np.ndarray):
-        """Fit calibrated random forest model."""
-        if len(np.unique(y)) < 2:
-            # Handle edge case where species is always 0 or always 1
-            y = np.copy(y)
-            y[0] = 1 - y[0]
+        """Fit calibrated random forest model or constant prevalence fallback."""
+        unique_classes, counts = np.unique(y, return_counts=True)
+        if len(unique_classes) < 2 or np.min(counts) < 2:
+            p_mean = float(np.mean(y)) if len(y) > 0 else 0.5
+            self.model = ConstantPrevalenceModel(p_mean)
+            self.is_fitted = True
+            self.is_constant_fallback = True
+            return
 
         base_rf = RandomForestClassifier(
             n_estimators=self.n_estimators,
             max_depth=6,
             random_state=self.random_state
         )
-        # 3-fold sigmoid probability calibration
-        cv_folds = min(3, max(2, int(np.sum(y))))
+        min_class_count = int(np.min(counts))
+        cv_folds = min(3, max(2, min_class_count))
         self.model = CalibratedClassifierCV(estimator=base_rf, method="sigmoid", cv=cv_folds)
         self.model.fit(X, y)
         self.is_fitted = True
+        self.is_constant_fallback = False
 
     def predict_encounter_rate(self, X: np.ndarray) -> np.ndarray:
         """Predict calibrated encounter probabilities pi in [0.0, 1.0]."""
@@ -128,7 +142,7 @@ class SpatialBlockCV:
 
 class BootstrapEnsembleUncertainty:
     """
-    Spatial-temporal bootstrap ensemble generator fitting M models per species
+    Spatial-temporal block bootstrap ensemble generator fitting M models per species
     to compute ensemble mean predictions and QBC model disagreement layers.
     """
 
@@ -140,15 +154,25 @@ class BootstrapEnsembleUncertainty:
         self,
         species_name: str,
         X: np.ndarray,
-        y: np.ndarray
+        y: np.ndarray,
+        block_ids: Optional[np.ndarray] = None
     ) -> List[CalibratedTreeEncounterModel]:
-        """Fit M bootstrap models by resampling observations with replacement."""
+        """Fit M spatial/temporal block bootstrap models by resampling blocks or observations with replacement."""
         rng = np.random.default_rng(self.seed)
         n_samples = len(X)
         ensemble = []
 
+        if block_ids is not None:
+            unique_blocks = np.unique(block_ids)
+            n_blocks = len(unique_blocks)
+
         for m in range(self.n_bootstrap):
-            bootstrap_idx = rng.choice(n_samples, size=n_samples, replace=True)
+            if block_ids is not None and n_blocks > 1:
+                sampled_blocks = rng.choice(unique_blocks, size=n_blocks, replace=True)
+                bootstrap_idx = np.concatenate([np.where(block_ids == b)[0] for b in sampled_blocks])
+            else:
+                bootstrap_idx = rng.choice(n_samples, size=n_samples, replace=True)
+
             X_b = X[bootstrap_idx]
             y_b = y[bootstrap_idx]
 

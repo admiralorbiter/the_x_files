@@ -60,9 +60,15 @@ class RedundancyAtlas:
             if w == week:
                 cell = self.grid.get_cell(cid)
                 for r in recs:
+                    # Compute observation kilometer planar coordinates if lat/lon present
+                    r_lat = r.get("lat", cell.center_lat)
+                    r_lon = r.get("lon", cell.center_lon)
+                    r_x_km = (r_lon - self.grid.center_lon) * self.grid.km_per_lon_deg
+                    r_y_km = (r_lat - self.grid.center_lat) * self.grid.km_per_lat_deg
+
                     week_obs.append({
-                        "x": cell.center_lat,
-                        "y": cell.center_lon,
+                        "x_km": r_x_km,
+                        "y_km": r_y_km,
                         "habitat": r.get("habitat", np.array([0.33, 0.33, 0.34]))
                     })
 
@@ -78,9 +84,9 @@ class RedundancyAtlas:
             coverage = 0.0
             for o in week_obs:
                 k = spatial_habitat_kernel(
-                    cell.center_lat, cell.center_lon, cell_hab,
-                    o["x"], o["y"], o["habitat"],
-                    length_spatial=length_spatial,
+                    cell.x_km, cell.y_km, cell_hab,
+                    o["x_km"], o["y_km"], o["habitat"],
+                    spatial_length_km=length_spatial,
                     length_habitat=length_habitat
                 )
                 coverage += k

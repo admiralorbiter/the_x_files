@@ -6,7 +6,14 @@ from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 import requests
 
-from ovon.synthetic.generator import CandidateSite, SyntheticDataset
+from ovon.synthetic.generator import CandidateSite, ExistingObservation, SyntheticDataset
+
+@dataclass
+class DataFetchResult:
+    records: List[Dict[str, Any]]
+    source: str
+    is_fallback: bool
+    warning: Optional[str] = None
 
 # Famous Kansas City Metro Parks, Fountains, Plazas & Conservation Landmarks
 FALLBACK_KC_PARKS = [
@@ -150,7 +157,7 @@ def build_kc_real_dataset(
     parks = fetch_kc_parks_overpass(center_lat, center_lon)
     gbif_obs = fetch_gbif_kc_birds(center_lat, center_lon)
 
-    species_list = list(set([o["species"] for o in gbif_obs if o.get("species")]))
+    species_list = sorted(list(set([o["species"] for o in gbif_obs if o.get("species")])))
     if len(species_list) < 4:
         species_list = FALLBACK_KC_BIRDS
     species_list = species_list[:8]  # Portfolio of 8 focal species
@@ -183,12 +190,11 @@ def build_kc_real_dataset(
             is_safe=True,
             observation_minutes=10,
             true_p=true_p,
-            bootstrap_predictions=bootstrap_preds
+            bootstrap_predictions=bootstrap_preds,
+            park_name=park["name"],
+            lat=lat,
+            lon=lon
         )
-        # Store metadata attributes
-        site.park_name = park["name"]  # type: ignore
-        site.lat = lat  # type: ignore
-        site.lon = lon  # type: ignore
         candidate_sites.append(site)
 
     # Compute road driving travel time matrix
@@ -202,12 +208,16 @@ def build_kc_real_dataset(
                 dist_road = dist_direct * road_winding_factor
                 travel_time_matrix[i, j] = (dist_road / avg_speed_kmh) * 60.0
 
-    # Past observations format
+    # Past observations format using ExistingObservation dataclass
     existing_obs = [
-        ((o["lon"] - center_lon) * 111.0 * math.cos(math.radians(center_lat)),
-         (o["lat"] - center_lat) * 111.0,
-         np.array([0.33, 0.33, 0.34]),
-         18)
+        ExistingObservation(
+            x_km=(o["lon"] - center_lon) * 111.0 * math.cos(math.radians(center_lat)),
+            y_km=(o["lat"] - center_lat) * 111.0,
+            habitat=np.array([0.33, 0.33, 0.34]),
+            week=18,
+            lat=o.get("lat"),
+            lon=o.get("lon")
+        )
         for o in gbif_obs
     ]
 

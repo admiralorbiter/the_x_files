@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+# Ensure src directory is in sys.path for ovon imports
+src_dir = str(Path(__file__).resolve().parent.parent)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
 import streamlit as st
 import folium
 import pandas as pd
@@ -32,6 +40,8 @@ st.set_page_config(
 st.title("🦅 OVON: Optimal Volunteer Observation Network")
 st.caption("Human-Aware, Route-Constrained Multi-Species Adaptive Sampling — Greater Kansas City Pilot Region")
 
+st.warning("⚠️ **Research Prototype Notice**: Current route values in Geographic Demo mode are simulated/demonstration data and should not be used as ecological field recommendations.")
+
 # Cache public GBIF data
 @st.cache_data
 def get_cached_gbif_records():
@@ -44,7 +54,8 @@ all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if r.get(
 st.sidebar.header("⚙️ Optimization Parameters")
 
 with st.sidebar.form(key="opt_form"):
-    use_real_kc = st.toggle("Use Real Kansas City Parks & GBIF Records", value=True)
+    data_mode = st.selectbox("Experiment Data Mode", options=["Kansas City Geographic Demo", "Synthetic Benchmark Experiment"], index=0)
+    use_real_kc = (data_mode == "Kansas City Geographic Demo")
     observer_profile = st.selectbox("Observer Experience Level", options=["Beginner", "Intermediate", "Advanced"], index=0)
     
     show_gbif_layer = st.checkbox("Overlay GBIF Species Sightings on Map", value=True)
@@ -122,13 +133,17 @@ with tab_map:
     # Grid Heatmap Layer Overlay
     if heatmap_layer != "None":
         grid = EqualAreaGrid(radius_km=25.0, resolution_km=8.0)
-        rng_hm = np.random.default_rng(42)
         for cell in grid.get_all_cells():
+            # Calculate deterministic metrics based on candidate sites within cell
+            matching_sites = [s for s in dataset.candidate_sites if abs(s.lat - cell.center_lat) < 0.05 and abs(s.lon - cell.center_lon) < 0.05] if hasattr(dataset.candidate_sites[0], "lat") else []
+            if matching_sites:
+                val = float(np.mean([np.mean(s.true_p) for s in matching_sites]))
+            else:
+                val = 0.3
+            
             if heatmap_layer == "Epistemic Disagreement (QBC)":
-                val = float(rng_hm.beta(0.5, 2.0))
                 color = f"#{int(255*val):02x}{int(255*(1-val)):02x}40"
             else:
-                val = float(rng_hm.uniform(0.1, 0.9))
                 color = f"#00{int(255*val):02x}{int(255*(1-val)):02x}"
 
             folium.Rectangle(

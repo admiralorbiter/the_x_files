@@ -14,11 +14,13 @@ class GridCell:
     max_lat: float
     min_lon: float
     max_lon: float
+    x_km: float = 0.0  # Planar x km relative to grid center
+    y_km: float = 0.0  # Planar y km relative to grid center
     area_sq_km: float = 9.0  # 3 km x 3 km
 
-class EqualAreaGrid:
+class ApproximateLocalGrid:
     """
-    Projected Equal-Area 3 km Square Grid centered on Kansas City (39.0997, -94.5786).
+    Planar Projected Local 3 km Square Grid centered on Kansas City (39.0997, -94.5786).
     """
 
     def __init__(
@@ -33,7 +35,7 @@ class EqualAreaGrid:
         self.radius_km = radius_km
         self.resolution_km = resolution_km
 
-        # Approximate degree scaling for Kansas City latitude (~39.1 deg N)
+        # Degree scaling for Kansas City latitude (~39.1 deg N)
         self.km_per_lat_deg = 111.0
         self.km_per_lon_deg = 111.0 * math.cos(math.radians(center_lat))
 
@@ -84,6 +86,9 @@ class EqualAreaGrid:
         center_lat = (c_min_lat + c_max_lat) / 2.0
         center_lon = (c_min_lon + c_max_lon) / 2.0
 
+        x_km = (center_lon - self.center_lon) * self.km_per_lon_deg
+        y_km = (center_lat - self.center_lat) * self.km_per_lat_deg
+
         return GridCell(
             cell_id=cell_id,
             row=row,
@@ -94,6 +99,8 @@ class EqualAreaGrid:
             max_lat=c_max_lat,
             min_lon=c_min_lon,
             max_lon=c_max_lon,
+            x_km=x_km,
+            y_km=y_km,
             area_sq_km=self.resolution_km ** 2
         )
 
@@ -130,3 +137,6 @@ class EqualAreaGrid:
             features[f"habitat_buffer_{buf}m"] = buf_comp
 
         return features
+
+# Backward-compatibility alias
+EqualAreaGrid = ApproximateLocalGrid

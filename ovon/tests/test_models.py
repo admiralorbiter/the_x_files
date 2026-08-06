@@ -24,6 +24,19 @@ def test_calibrated_tree_model():
     assert metrics.brier_score >= 0.0
     assert metrics.auc_roc >= 0.0
 
+def test_single_class_model_fallback():
+    X = np.ones((20, 7))
+    y_all_zeros = np.zeros(20, dtype=int)
+    
+    model = CalibratedTreeEncounterModel(species_name="Rare Vagrant")
+    model.fit(X, y_all_zeros)
+
+    # Check fallback activation and label preservation
+    assert model.is_constant_fallback is True
+    assert (y_all_zeros == 0).all()  # y was not mutated
+    preds = model.predict_encounter_rate(X[:5])
+    np.testing.assert_allclose(preds, 0.001, atol=1e-5)
+
 def test_spatial_block_cv():
     rng = np.random.default_rng(42)
     coords = rng.uniform(38.5, 39.5, size=(40, 2))

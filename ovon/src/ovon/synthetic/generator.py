@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional, Union
 import numpy as np
 
 @dataclass
@@ -13,12 +13,25 @@ class CandidateSite:
     observation_minutes: int = 10
     true_p: np.ndarray = field(default_factory=lambda: np.array([]))  # shape (n_species,)
     bootstrap_predictions: np.ndarray = field(default_factory=lambda: np.array([[]]))  # shape (n_species, n_bootstrap)
+    park_name: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+@dataclass
+class ExistingObservation:
+    x_km: float
+    y_km: float
+    habitat: np.ndarray
+    week: int
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    observer_id: Optional[str] = None
 
 @dataclass
 class SyntheticDataset:
     candidate_sites: List[CandidateSite]
     travel_time_matrix: np.ndarray  # shape (N, N) in minutes
-    existing_observations: List[Tuple[float, float, np.ndarray, int]]  # (x, y, habitat, week)
+    existing_observations: List[Union[Tuple[float, float, np.ndarray, int], ExistingObservation]]  # (x, y, habitat, week) or ExistingObservation
     n_species: int
     n_bootstrap: int
     species_names: List[str]

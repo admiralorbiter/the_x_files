@@ -45,7 +45,7 @@ def fetch_osrm_route(
     Fetch exact driving route from Open Source Routing Machine (OSRM) public API.
     Returns duration, distance, road-snapped polyline coordinates, and turn-by-turn steps.
     """
-    url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
+    url = f"https://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
     
     try:
         response = requests.get(url, timeout=timeout)
@@ -99,7 +99,7 @@ def fetch_osrm_multistop_route(
         return {"duration_min": 0.0, "distance_km": 0.0, "polyline_coords": [], "steps": [], "is_fallback": False}
 
     coord_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
-    url = f"http://router.project-osrm.org/route/v1/driving/{coord_str}?overview=full&geometries=geojson&steps=true"
+    url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}?overview=full&geometries=geojson&steps=true"
 
     try:
         response = requests.get(url, timeout=timeout)

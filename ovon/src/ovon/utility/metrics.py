@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 from ovon.synthetic.generator import CandidateSite
 
 # List of known seasonal migratory bird keywords vs year-round residents
@@ -39,25 +39,30 @@ def calculate_qbc_disagreement(bootstrap_preds: np.ndarray) -> np.ndarray:
 def spatial_habitat_kernel(
     x1: float, y1: float, hab1: np.ndarray,
     x2: float, y2: float, hab2: np.ndarray,
-    length_spatial: float = 10.0,
-    length_habitat: float = 0.5
+    spatial_length_km: float = 10.0,
+    length_habitat: float = 0.5,
+    length_spatial: Optional[float] = None
 ) -> float:
     """
-    Compute pairwise Gaussian similarity kernel across space and habitat.
+    Compute pairwise Gaussian similarity kernel across space (km) and habitat.
     """
+    if length_spatial is not None:
+        spatial_length_km = length_spatial
+
     d_space_sq = (x1 - x2)**2 + (y1 - y2)**2
     d_hab_sq = np.sum((hab1 - hab2)**2)
 
-    k_space = np.exp(-d_space_sq / (2.0 * length_spatial**2))
+    k_space = np.exp(-d_space_sq / (2.0 * spatial_length_km**2))
     k_hab = np.exp(-d_hab_sq / (2.0 * length_habitat**2))
 
     return float(k_space * k_hab)
 
 def calculate_site_redundancy_to_history(
     site: CandidateSite,
-    existing_observations: List[Tuple[float, float, np.ndarray, int]],
-    length_spatial: float = 10.0,
-    length_habitat: float = 0.5
+    existing_observations: List[Any],
+    spatial_length_km: float = 10.0,
+    length_habitat: float = 0.5,
+    length_spatial: Optional[float] = None
 ) -> float:
     """
     Calculate normalized redundancy index R(site | D) in [0, 1).
@@ -65,12 +70,20 @@ def calculate_site_redundancy_to_history(
     if not existing_observations:
         return 0.0
 
+    if length_spatial is not None:
+        spatial_length_km = length_spatial
+
     total_coverage = 0.0
-    for obs_x, obs_y, obs_hab, _ in existing_observations:
+    for obs in existing_observations:
+        if hasattr(obs, "x_km"):
+            obs_x, obs_y, obs_hab = obs.x_km, obs.y_km, obs.habitat
+        else:
+            obs_x, obs_y, obs_hab = obs[0], obs[1], obs[2]
+
         k = spatial_habitat_kernel(
             site.x, site.y, site.habitat,
             obs_x, obs_y, obs_hab,
-            length_spatial=length_spatial,
+            spatial_length_km=spatial_length_km,
             length_habitat=length_habitat
         )
         total_coverage += k

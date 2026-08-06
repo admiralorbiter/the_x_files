@@ -36,12 +36,20 @@ def test_spatial_habitat_kernel():
     hab1 = np.array([0.5, 0.3, 0.2])
     hab2 = np.array([0.5, 0.3, 0.2])
     # Distance = 0 -> Kernel = 1.0
-    k_same = spatial_habitat_kernel(0.0, 0.0, hab1, 0.0, 0.0, hab2)
-    assert k_same == pytest.approx(1.0)
+    k_0 = spatial_habitat_kernel(0.0, 0.0, hab1, 0.0, 0.0, hab2, spatial_length_km=10.0)
+    assert k_0 == pytest.approx(1.0)
 
-    # Far spatial distance -> Kernel < 0.1
-    k_far = spatial_habitat_kernel(0.0, 0.0, hab1, 50.0, 50.0, hab2)
-    assert k_far < 0.1
+    # 3 km -> ~0.955
+    k_3 = spatial_habitat_kernel(0.0, 0.0, hab1, 3.0, 0.0, hab2, spatial_length_km=10.0)
+    assert 0.90 < k_3 < 0.98
+
+    # 10 km -> ~0.606 (1/sqrt(e))
+    k_10 = spatial_habitat_kernel(0.0, 0.0, hab1, 10.0, 0.0, hab2, spatial_length_km=10.0)
+    assert 0.55 < k_10 < 0.65
+
+    # 30 km -> < 0.02
+    k_30 = spatial_habitat_kernel(0.0, 0.0, hab1, 30.0, 0.0, hab2, spatial_length_km=10.0)
+    assert k_30 < 0.05
 
 def test_set_utility_decay_on_duplicates():
     dataset = generate_synthetic_dataset(n_sites=5, seed=42)
