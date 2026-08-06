@@ -298,8 +298,9 @@ with tab_map:
         lat = getattr(s, "lat", center_lat + (s.y / 111.0))
         lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
         
+        dur_m = getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 5))
         transit_info = getattr(s, "transit_connection", "Pedestrian Access")
-        protocol_note = f"{s.observation_minutes}-min stationary complete eBird checklist"
+        protocol_note = f"{dur_m}-min stationary complete eBird checklist"
         if observer_profile == "Beginner":
             protocol_note += " (Focus on high-detectability focal species; audio recording encouraged)"
         elif observer_profile == "Advanced":
@@ -319,7 +320,7 @@ with tab_map:
             "Transit / Access Connection": transit_info,
             "Coordinates": f"{lat:.4f}, {lon:.4f}",
             "Protocol & Guidance": protocol_note,
-            "Survey Duration": f"{s.observation_minutes} min"
+            "Optimized Survey Duration": f"{dur_m} min"
         })
     st.table(pd.DataFrame(itinerary_data))
 

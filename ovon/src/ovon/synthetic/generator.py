@@ -10,7 +10,8 @@ class CandidateSite:
     habitat: np.ndarray  # composition vector (e.g., [forest, wetland, urban])
     is_public: bool = True
     is_safe: bool = True
-    observation_minutes: int = 10
+    observation_minutes: int = 5
+    allocated_observation_minutes: int = 5
     true_p: np.ndarray = field(default_factory=lambda: np.array([]))  # shape (n_species,)
     bootstrap_predictions: np.ndarray = field(default_factory=lambda: np.array([[]]))  # shape (n_species, n_bootstrap)
     park_name: Optional[str] = None

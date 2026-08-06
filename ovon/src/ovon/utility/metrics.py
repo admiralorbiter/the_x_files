@@ -131,6 +131,11 @@ def get_species_migratory_weights(species_names: List[str]) -> np.ndarray:
 
     return weights / np.sum(weights)
 
+def duration_efficiency_multiplier(duration_minutes: float) -> float:
+    """Calculate asymptotic survey duration information multiplier M(tau) in (0, 1]."""
+    tau = float(max(1.0, duration_minutes))
+    return float(1.0 - np.exp(-0.12 * tau))
+
 def compute_set_utility(
     selected_sites: List[CandidateSite],
     existing_observations: List[Any],
@@ -144,9 +149,9 @@ def compute_set_utility(
     length_spatial: Optional[float] = None
 ) -> float:
     """
-    Compute total multi-species information utility for a set of selected sites A.
+    Compute total multi-species information utility for a set of selected sites A with variable durations.
     
-    U(A) = sum_s w_s [ sum_{a in A} q(s, a) * (1 - R(a|D, week)) - lambda * sum_{a,b in A} k(a, b) ]
+    U(A) = sum_s w_s [ sum_{a in A} q(s, a) * M(tau_a) * (1 - R(a|D, week)) - lambda * sum_{a,b in A} k(a, b) ]
     """
     if not selected_sites:
         return 0.0
@@ -164,7 +169,7 @@ def compute_set_utility(
 
     total_utility = 0.0
 
-    # 1. Pointwise information value adjusted by historical spatiotemporal redundancy
+    # 1. Pointwise information value adjusted by duration efficiency and historical redundancy
     for site in selected_sites:
         qbc_scores = calculate_qbc_disagreement(site.bootstrap_predictions)  # (n_species,)
         redundancy_hist = calculate_site_redundancy_to_history(
@@ -174,7 +179,9 @@ def compute_set_utility(
             length_habitat=length_habitat,
             length_time_weeks=length_time_weeks
         )
-        site_val = np.sum(species_weights * qbc_scores) * (1.0 - redundancy_hist)
+        tau = getattr(site, "allocated_observation_minutes", getattr(site, "observation_minutes", 5))
+        duration_eff = duration_efficiency_multiplier(tau)
+        site_val = np.sum(species_weights * qbc_scores) * duration_eff * (1.0 - redundancy_hist)
         total_utility += site_val
 
     # 2. Pairwise redundancy penalty among selected sites

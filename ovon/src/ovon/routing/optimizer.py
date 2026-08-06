@@ -55,7 +55,7 @@ def calculate_route_cost_breakdown(
     if return_to_hub and len(stop_ids) > 1:
         return_leg = float(travel_matrix[stop_ids[-1], stop_ids[0]])
 
-    stat_obs = sum(float(s.observation_minutes) for s in stops)
+    stat_obs = sum(float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 5))) for s in stops)
     access_buf = sum(float(access_buffer_minutes) for s in stops)
 
     total_m = inter_travel + return_leg + stat_obs + access_buf
@@ -92,7 +92,7 @@ def build_greedy_route(
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
     """
-    Construct a route greedily based on marginal utility gain per minute added.
+    Construct a route greedily based on marginal utility gain per minute added (evaluating new sites & duration extensions).
     """
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
@@ -100,7 +100,11 @@ def build_greedy_route(
     if start_site_id not in site_dict:
         start_site_id = valid_sites[0].site_id
 
-    current_stops = [site_dict[start_site_id]]
+    # Make copy of start site with default 5-min duration
+    start_site = site_dict[start_site_id]
+    start_site.allocated_observation_minutes = getattr(start_site, "observation_minutes", 5)
+
+    current_stops = [start_site]
     current_ids = [start_site_id]
     visited_ids: Set[int] = {start_site_id}
 
@@ -109,19 +113,30 @@ def build_greedy_route(
     )
 
     while True:
+        best_action_type = None  # "INSERT_SITE" or "EXTEND_DURATION"
         best_candidate: Optional[CandidateSite] = None
+        best_extend_idx: Optional[int] = None
         best_efficiency = -1e9
         best_added_time = 0.0
         best_new_utility = current_utility
 
+        cur_travel_m, cur_obs_m, cur_tot_m = calculate_route_total_time(
+            current_stops, current_ids, dataset.travel_time_matrix,
+            return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
+        )
+
+        # 1. Evaluate inserting unvisited candidate sites with 5-min initial count
         for site_id, candidate in site_dict.items():
             if site_id in visited_ids:
                 continue
 
-            test_ids = current_ids + [site_id]
-            test_stops = current_stops + [candidate]
+            test_candidate = candidate
+            test_candidate.allocated_observation_minutes = getattr(candidate, "observation_minutes", 5)
 
-            travel_m, obs_m, total_m = calculate_route_total_time(
+            test_ids = current_ids + [site_id]
+            test_stops = current_stops + [test_candidate]
+
+            _, _, total_m = calculate_route_total_time(
                 test_stops, test_ids, dataset.travel_time_matrix,
                 return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
             )
@@ -133,28 +148,55 @@ def build_greedy_route(
                 test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week
             )
             marginal_u = new_utility - current_utility
-
-            # Added time
-            cur_travel_m, cur_obs_m, cur_tot_m = calculate_route_total_time(
-                current_stops, current_ids, dataset.travel_time_matrix,
-                return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
-            )
-            added_time = total_m - cur_tot_m
-            if added_time <= 0:
-                added_time = 0.1
-
+            added_time = max(0.1, total_m - cur_tot_m)
             efficiency = marginal_u / added_time
 
             if efficiency > best_efficiency and marginal_u > 0:
                 best_efficiency = efficiency
-                best_candidate = candidate
+                best_action_type = "INSERT_SITE"
+                best_candidate = test_candidate
                 best_added_time = added_time
                 best_new_utility = new_utility
 
-        if best_candidate is not None:
+        # 2. Evaluate extending observation duration of existing selected stops (+5 min, max 20 min)
+        for idx, stop in enumerate(current_stops):
+            cur_dur = getattr(stop, "allocated_observation_minutes", 5)
+            if cur_dur >= 20:
+                continue
+
+            # Temporarily extend duration by +5 min
+            stop.allocated_observation_minutes = cur_dur + 5
+            _, _, total_m = calculate_route_total_time(
+                current_stops, current_ids, dataset.travel_time_matrix,
+                return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
+            )
+
+            if total_m <= budget_minutes:
+                new_utility = compute_set_utility(
+                    current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+                )
+                marginal_u = new_utility - current_utility
+                added_time = 5.0
+                efficiency = marginal_u / added_time
+
+                if efficiency > best_efficiency and marginal_u > 0:
+                    best_efficiency = efficiency
+                    best_action_type = "EXTEND_DURATION"
+                    best_extend_idx = idx
+                    best_new_utility = new_utility
+
+            # Revert duration back
+            stop.allocated_observation_minutes = cur_dur
+
+        # Execute best action
+        if best_action_type == "INSERT_SITE" and best_candidate is not None:
             current_stops.append(best_candidate)
             current_ids.append(best_candidate.site_id)
             visited_ids.add(best_candidate.site_id)
+            current_utility = best_new_utility
+        elif best_action_type == "EXTEND_DURATION" and best_extend_idx is not None:
+            cur_dur = getattr(current_stops[best_extend_idx], "allocated_observation_minutes", 5)
+            current_stops[best_extend_idx].allocated_observation_minutes = cur_dur + 5
             current_utility = best_new_utility
         else:
             break
@@ -184,7 +226,7 @@ def refine_route_local_search(
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
     """
-    Refine a route using 2-opt reordering and candidate insertion/swap local search.
+    Refine a route using 2-opt reordering and survey duration tuning.
     """
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
@@ -204,7 +246,9 @@ def refine_route_local_search(
                 for j in range(i + 1, n_stops):
                     new_ids = current_ids[:i] + current_ids[i:j+1][::-1] + current_ids[j+1:]
                     new_stops = [site_dict[sid] for sid in new_ids]
-                    
+                    for idx_s, st_item in enumerate(new_stops):
+                        st_item.allocated_observation_minutes = getattr(current_stops[current_ids.index(st_item.site_id)], "allocated_observation_minutes", 5) if st_item.site_id in current_ids else 5
+
                     t_m, o_m, tot_m = calculate_route_total_time(
                         new_stops, new_ids, dataset.travel_time_matrix,
                         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
@@ -220,30 +264,19 @@ def refine_route_local_search(
                 if improved:
                     break
 
-        n = len(current_ids)
-        if n < 3:
-            break
-
-        for i in range(1, n - 1):
-            for j in range(i + 1, n):
-                test_ids = current_ids[:i] + list(reversed(current_ids[i:j+1])) + current_ids[j+1:]
-                test_stops = [site_dict[sid] for sid in test_ids]
-
-                t_m, o_m, tot_m = calculate_route_total_time(
-                    test_stops, test_ids, dataset.travel_time_matrix,
+        # 2. Duration extension tuning (+5 min if budget allows)
+        for stop in current_stops:
+            cur_d = getattr(stop, "allocated_observation_minutes", 5)
+            if cur_d < 20:
+                stop.allocated_observation_minutes = cur_d + 5
+                _, _, tot_m = calculate_route_total_time(
+                    current_stops, current_ids, dataset.travel_time_matrix,
                     return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
                 )
-                
                 if tot_m <= budget:
-                    cur_u = compute_set_utility(current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
-                    new_u = compute_set_utility(test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
-                    if new_u > cur_u + 1e-5:
-                        current_ids = test_ids
-                        current_stops = test_stops
-                        improved = True
-                        break
-            if improved:
-                break
+                    improved = True
+                else:
+                    stop.allocated_observation_minutes = cur_d
 
     cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
