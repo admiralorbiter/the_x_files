@@ -95,12 +95,13 @@ def build_greedy_route(
     lambda_redundancy: float = 0.5,
     survey_week: int = 18,
     return_to_hub: bool = True,
-    access_buffer_minutes: float = 3.0
+    access_buffer_minutes: float = 3.0,
+    fixed_duration_minutes: Optional[float] = None
 ) -> RouteSolution:
     """
     Construct a route greedily based on marginal utility gain per minute added.
+    Supports fixed observation duration (e.g. fixed 10 min) for baseline comparisons.
     Preserves dataset object immutability by creating isolated site copies.
-    Passes species_names and survey_week to all utility evaluations.
     """
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
@@ -108,9 +109,10 @@ def build_greedy_route(
     if start_site_id not in site_dict:
         start_site_id = valid_sites[0].site_id
 
-    # Create immutable copy of start site
+    default_dur = fixed_duration_minutes if fixed_duration_minutes is not None else 5
+
     start_site = copy.copy(site_dict[start_site_id])
-    start_site.allocated_observation_minutes = getattr(start_site, "observation_minutes", 5)
+    start_site.allocated_observation_minutes = default_dur
 
     current_stops = [start_site]
     current_ids = [start_site_id]
@@ -145,7 +147,7 @@ def build_greedy_route(
                 continue
 
             test_candidate = copy.copy(candidate)
-            test_candidate.allocated_observation_minutes = getattr(candidate, "observation_minutes", 5)
+            test_candidate.allocated_observation_minutes = default_dur
 
             test_ids = current_ids + [site_id]
             test_stops = current_stops + [test_candidate]
@@ -176,37 +178,38 @@ def build_greedy_route(
                 best_added_time = added_time
                 best_new_utility = new_utility
 
-        # 2. Evaluate extending observation duration (+5 min, max 20 min) using (U(tau+5) - U(tau))/5
-        for idx, stop in enumerate(current_stops):
-            cur_dur = getattr(stop, "allocated_observation_minutes", 5)
-            if cur_dur >= 20:
-                continue
+        # 2. Evaluate extending observation duration (+5 min) if variable duration allowed
+        if fixed_duration_minutes is None:
+            for idx, stop in enumerate(current_stops):
+                cur_dur = getattr(stop, "allocated_observation_minutes", 5)
+                if cur_dur >= 20:
+                    continue
 
-            test_stops = [copy.copy(s) for s in current_stops]
-            test_stops[idx].allocated_observation_minutes = cur_dur + 5
+                test_stops = [copy.copy(s) for s in current_stops]
+                test_stops[idx].allocated_observation_minutes = cur_dur + 5
 
-            _, _, total_m = calculate_route_total_time(
-                test_stops, current_ids, dataset.travel_time_matrix,
-                return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
-            )
-
-            if total_m <= budget_minutes:
-                new_utility = compute_set_utility(
-                    test_stops,
-                    dataset.existing_observations,
-                    species_names=species_names,
-                    lambda_redundancy=lambda_redundancy,
-                    survey_week=survey_week
+                _, _, total_m = calculate_route_total_time(
+                    test_stops, current_ids, dataset.travel_time_matrix,
+                    return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
                 )
-                marginal_u = new_utility - current_utility
-                added_time = 5.0
-                efficiency = marginal_u / added_time
 
-                if efficiency > best_efficiency and marginal_u > 0:
-                    best_efficiency = efficiency
-                    best_action_type = "EXTEND_DURATION"
-                    best_extend_idx = idx
-                    best_new_utility = new_utility
+                if total_m <= budget_minutes:
+                    new_utility = compute_set_utility(
+                        test_stops,
+                        dataset.existing_observations,
+                        species_names=species_names,
+                        lambda_redundancy=lambda_redundancy,
+                        survey_week=survey_week
+                    )
+                    marginal_u = new_utility - current_utility
+                    added_time = 5.0
+                    efficiency = marginal_u / added_time
+
+                    if efficiency > best_efficiency and marginal_u > 0:
+                        best_efficiency = efficiency
+                        best_action_type = "EXTEND_DURATION"
+                        best_extend_idx = idx
+                        best_new_utility = new_utility
 
         # Execute single best action
         if best_action_type == "INSERT_SITE" and best_candidate is not None:
@@ -248,7 +251,7 @@ def refine_route_local_search(
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
     """
-    Refine a route using 2-opt reordering and survey duration tuning without mutating cached dataset objects.
+    Refine a route using 2-opt reordering and greedy marginal duration tuning without mutating cached dataset objects.
     """
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
@@ -278,7 +281,6 @@ def refine_route_local_search(
                         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
                     )
                     if tot_m <= budget:
-                        new_u = compute_set_utility(new_stops, dataset.existing_observations, species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
                         cur_travel = calculate_route_travel_time(current_ids, dataset.travel_time_matrix, return_to_hub=return_to_hub)
                         if t_m < cur_travel - 1e-4:
                             current_ids = new_ids
@@ -288,19 +290,41 @@ def refine_route_local_search(
                 if improved:
                     break
 
-        # 2. Duration extension tuning
+        # 2. Greedy marginal duration extension selection: i* = argmax (U(tau_i + 5) - U(tau_i)) / 5
+        best_extend_idx = None
+        best_marginal_gain = -1e9
+
+        cur_u = compute_set_utility(
+            current_stops, dataset.existing_observations,
+            species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+        )
+
         for idx, stop in enumerate(current_stops):
             cur_d = getattr(stop, "allocated_observation_minutes", 5)
-            if cur_d < 20:
-                stop.allocated_observation_minutes = cur_d + 5
-                _, _, tot_m = calculate_route_total_time(
-                    current_stops, current_ids, dataset.travel_time_matrix,
-                    return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
+            if cur_d >= 20:
+                continue
+
+            test_stops = [copy.copy(s) for s in current_stops]
+            test_stops[idx].allocated_observation_minutes = cur_d + 5
+
+            _, _, tot_m = calculate_route_total_time(
+                test_stops, current_ids, dataset.travel_time_matrix,
+                return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
+            )
+            if tot_m <= budget:
+                new_u = compute_set_utility(
+                    test_stops, dataset.existing_observations,
+                    species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
                 )
-                if tot_m <= budget:
-                    improved = True
-                else:
-                    stop.allocated_observation_minutes = cur_d
+                marginal_g = (new_u - cur_u) / 5.0
+                if marginal_g > best_marginal_gain and marginal_g > 0:
+                    best_marginal_gain = marginal_g
+                    best_extend_idx = idx
+
+        if best_extend_idx is not None:
+            cur_d = getattr(current_stops[best_extend_idx], "allocated_observation_minutes", 5)
+            current_stops[best_extend_idx].allocated_observation_minutes = cur_d + 5
+            improved = True
 
     cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
@@ -331,12 +355,12 @@ def build_random_route(
     rng = np.random.default_rng(seed)
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
-    species_names = getattr(dataset, "species_names", None)
 
     if start_site_id not in site_dict:
         start_site_id = valid_sites[0].site_id
 
     current_stops = [copy.copy(site_dict[start_site_id])]
+    current_stops[0].allocated_observation_minutes = getattr(current_stops[0], "observation_minutes", 5)
     current_ids = [start_site_id]
 
     unvisited = [s.site_id for s in valid_sites if s.site_id != start_site_id]
@@ -344,6 +368,7 @@ def build_random_route(
 
     for sid in unvisited:
         candidate = copy.copy(site_dict[sid])
+        candidate.allocated_observation_minutes = getattr(candidate, "observation_minutes", 5)
         test_ids = current_ids + [sid]
         test_stops = current_stops + [candidate]
         _, _, tot_m = calculate_route_total_time(
@@ -351,13 +376,14 @@ def build_random_route(
             return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
         )
         if tot_m <= budget_minutes:
-            current_ids.append(sid)
             current_stops.append(candidate)
+            current_ids.append(sid)
 
     cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
+    species_names = getattr(dataset, "species_names", None)
     u = compute_set_utility(current_stops, dataset.existing_observations, species_names=species_names)
 
     return RouteSolution(
@@ -378,40 +404,42 @@ def build_hotspot_route(
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
-    """Build a route selecting highest average encounter probabilities (hotspots)."""
+    """Build a route selecting highest historical species richness candidate sites."""
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
-    species_names = getattr(dataset, "species_names", None)
 
     if start_site_id not in site_dict:
         start_site_id = valid_sites[0].site_id
 
-    site_richness = {s.site_id: float(np.mean(s.true_p)) for s in valid_sites}
-    sorted_sids = sorted(site_richness.keys(), key=lambda k: site_richness[k], reverse=True)
-
     current_stops = [copy.copy(site_dict[start_site_id])]
+    current_stops[0].allocated_observation_minutes = getattr(current_stops[0], "observation_minutes", 5)
     current_ids = [start_site_id]
-    visited_ids = {start_site_id}
 
-    for sid in sorted_sids:
-        if sid in visited_ids:
-            continue
-        candidate = copy.copy(site_dict[sid])
-        test_ids = current_ids + [sid]
-        test_stops = current_stops + [candidate]
+    ranked_sites = sorted(
+        [s for s in valid_sites if s.site_id != start_site_id],
+        key=lambda s: float(np.sum(s.true_p)),
+        reverse=True
+    )
+
+    for candidate in ranked_sites:
+        cand_copy = copy.copy(candidate)
+        cand_copy.allocated_observation_minutes = getattr(cand_copy, "observation_minutes", 5)
+        test_ids = current_ids + [candidate.site_id]
+        test_stops = current_stops + [cand_copy]
+
         _, _, tot_m = calculate_route_total_time(
             test_stops, test_ids, dataset.travel_time_matrix,
             return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
         )
         if tot_m <= budget_minutes:
-            current_ids.append(sid)
-            current_stops.append(candidate)
-            visited_ids.add(sid)
+            current_stops.append(cand_copy)
+            current_ids.append(candidate.site_id)
 
     cbd = calculate_route_cost_breakdown(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
+    species_names = getattr(dataset, "species_names", None)
     u = compute_set_utility(current_stops, dataset.existing_observations, species_names=species_names)
 
     return RouteSolution(

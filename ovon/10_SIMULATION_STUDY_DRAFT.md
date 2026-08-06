@@ -1,4 +1,6 @@
-# Human-Aware, Route-Constrained Multi-Species Adaptive Sampling for Citizen-Science Bird Surveys
+# Human-Aware, Route-Constrained Multi-Species Adaptive Sampling for Citizen-Science Bird Surveys: Simulation Study
+
+> **[WARNING / DISCLAIMER]**: All numerical results in this document are illustrative simulation outputs from synthetic/mock checklist datasets. They are not empirical findings and MUST NOT be cited as empirical results until raw EBD/SED parquet extracts are loaded and re-fitted.
 
 **Authors**: OVON Research Group  
 **Target Publication**: *Methods in Ecology and Evolution / Ecological Informatics*  
@@ -16,7 +18,7 @@ This paper presents the **Optimal Volunteer Observation Network (OVON)**, a unif
 3. **Dynamic Phenology & Standardized Feature Kernels**: Cyclic 52-week species phenology weighting ($w_{s,t}$) coupled with z-score standardized Mahalanobis habitat kernel distances.
 4. **Joint Route & Duration Optimization**: Closed-loop OSRM pedestrian/driving itinerary construction under a global time budget $B$, combining submodular spatial-temporal information utility with greedy marginal duration allocation $\frac{U(\tau_i + 5) - U(\tau_i)}{5}$.
 
-In a rolling historical replay experiment (training on 2022 complete checklists and evaluating on 2023 held-out test checklists in Greater Kansas City), the **OVON Variable-Duration Policy** achieved **2.0× greater Brier score reduction per volunteer minute** than traditional species richness (hotspot) sampling or random feasible routes.
+In a simulated historical replay experiment (training on simulated 2022 complete checklists and evaluating on 2023 held-out test checklists in Greater Kansas City), the **OVON Variable-Duration Policy** achieved enhanced Brier score reduction per volunteer minute compared to traditional species richness (hotspot) sampling or random feasible routes.
 
 ---
 
@@ -56,7 +58,7 @@ OVON addresses this challenge by jointly optimizing the **sequence of visited ca
                 └─────────────────┬─────────────────┘
                                   ▼
                 ┌───────────────────────────────────┐
-                │   Rolling Historical Replay       │
+                │   Simulated Historical Replay     │
                 │   Out-of-Fold Evaluation          │
                 └───────────────────────────────────┘
 ```
@@ -83,7 +85,7 @@ Each candidate site $i$ is described by a 4-dimensional environmental covariate 
 - $w_i$: Distance to nearest NHDPlus waterbody (km) and NWI wetland Cowardin classification (`PEM1A`, `PFO1A`, `R2UBH`)
 - $g_i$: Vegetation greenness index / NDVI proxy
 
-Features are standardized via z-score scaling $z_j = \frac{x_j - \mu_j}{\sigma_j}$ to maintain metric distance integrity without L1 composition distortion.
+Features are standardized via z-score scaling $z_j = \frac{x_j - \mu_j}{\sigma_j}$ fitted dynamically on training data.
 
 ### 2.3 Dynamic Weekly Phenology Priors ($w_{s,t}$)
 Target species priorities vary across the annual 52-week calendar. Weekly species weights $w_{s,t}$ are computed dynamically:
@@ -119,58 +121,27 @@ Repeatedly extending only the single stop with the highest marginal value until 
 
 ---
 
-## 4. Empirical Historical Replay Experiment
+## 4. Simulated Historical Replay Experiment
 
 ### 4.1 Experimental Protocol
-To evaluate OVON without synthetic bias, we constructed a **Rolling Historical Replay Benchmark**:
-1. **Training Set**: 150 complete eBird checklists recorded across Greater Kansas City in **Year $t-1$ (2022)**.
-2. **Model Training**: A 50-tree Calibrated Random Forest model with spatial quadrant block CV was trained for *Passerina cyanea* (Indigo Bunting).
-3. **Replay Set**: 150 complete checklists recorded in **Year $t$ (2023)**.
-4. **Policy Execution**: 5 competing policies selected candidate observation itineraries under a strict 90-minute time budget at Week 18 (mid-May migration peak).
-5. **Outcome Evaluation**: Checklist outcomes from Year $t$ were revealed for selected route stops. Model parameters were updated, measuring held-out **Brier Score Reduction**, **Log-Loss Improvement**, and **Information Gain per Volunteer Minute**.
-
-### 4.2 Benchmark Results
-
-| Policy Name | Stops ($k$) | Total Time (min) | Initial Brier | Post-Obs Brier | Brier Reduction ($\Delta \text{Brier}$) | Information Gain / Min |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. OVON Variable-Duration Route** | **5** | **88.5 min** | **0.2140** | **0.1702** | **+0.0438** | **0.00049** |
-| **2. OVON Fixed-Duration Route** | 4 | 74.2 min | 0.2140 | 0.1773 | +0.0367 | 0.00049 |
-| **3. Pointwise QBC Sampling** | 5 | 88.5 min | 0.2140 | 0.1702 | +0.0438 | 0.00049 |
-| **4. Raw Hotspot Policy** | 4 | 82.0 min | 0.2140 | 0.1921 | +0.0219 | 0.00027 |
-| **5. Random Feasible Route** | 3 | 68.0 min | 0.2140 | 0.1932 | +0.0208 | 0.00031 |
-
-```
-                 POST-OBSERVATION BRIER SCORE REDUCTION
- 0.050 ┌──────────────────────────────────────────────────────────┐
-       │                                             ████████████ │
- 0.040 │                                             ██  OVON  ██ │
-       │                                             ██  VAR   ██ │
- 0.030 │                              ████████████   ████████████ │
-       │                              ██  OVON  ██   ██        ██ │
- 0.020 │               ████████████   ██  FIX   ██   ██        ██ │
-       │               ██ HOTSPOT██   ████████████   ██        ██ │
- 0.010 │ ████████████  ██        ██   ██        ██   ██        ██ │
-       │ ██ RANDOM ██  ██        ██   ██        ██   ██        ██ │
- 0.000 └─██────────██──██────────██───██────────██───██────────██─┘
-         Random        Hotspot        OVON Fixed     OVON Var
-```
+To evaluate OVON under simulated checklist data, we constructed a **Simulated Historical Replay Benchmark**:
+1. **Training Set**: 150 complete eBird checklists generated across Greater Kansas City in **Year $t-1$ (2022)**.
+2. **Model Training**: A Calibrated Random Forest model with spatial quadrant block CV was trained for *Passerina cyanea* (Indigo Bunting).
+3. **Replay Set**: 150 complete checklists generated in **Year $t$ (2023)**, split into candidate selection pool $D_{\text{candidate}}$ and untouched held-out evaluation set $D_{\text{eval}}$.
+4. **Policy Execution**: 5 competing policies selected candidate observation itineraries under a strict 90-minute time budget at Week 18.
+5. **Model Re-Fitting**: Detections for selected stops were revealed, added to training data, and models were re-fitted and evaluated on untouched $D_{\text{eval}}$, measuring held-out **Brier Score Reduction**, **Log-Loss Improvement**, and **Information Gain per Volunteer Minute**.
 
 ---
 
 ## 5. Main Findings & Discussion
 
-### 5.1 Confirmation of Core Hypotheses
-1. **Hypothesis H1 (Variable Duration Superiority)**:
-   The **OVON Variable-Duration Policy** achieved a **+0.0438 Brier score reduction**, outperforming the fixed 10-minute policy (+0.0367). Allocating extra observation minutes (15–20 min) to high-uncertainty, cryptic forest sites while spending only 5 min at high-visibility open-water sites yielded higher overall survey efficiency.
-2. **Hypothesis H2 (Low Route Constraint Penalty)**:
-   Connecting observation sites into feasibility-constrained closed-loop OSRM routes reduced total information gain by less than **4.2%** compared to unconstrained pointwise QBC sampling. Because urban landscapes contain geographic substitute sites (e.g., alternative parks along the same greenway corridor), route-aware optimization recovers nearly all theoretical active learning value.
+### 5.1 Key Simulation Insights
+1. **Variable Duration Superiority**:
+   Allocating extra observation minutes (15–20 min) to high-uncertainty forest sites while spending 5 min at open-water sites yielded higher overall survey efficiency than fixed 10-minute stops.
+2. **Low Route Constraint Penalty**:
+   Connecting observation sites into feasibility-constrained closed-loop OSRM routes retained most active learning value due to geographic substitute sites along greenway corridors.
 3. **Efficiency Gain Over Hotspots**:
-   OVON produced **2.0× greater Brier score reduction per volunteer minute** than raw hotspot sampling ($0.00049$ vs. $0.00027$). Visiting well-known hotspots creates redundant observations, whereas OVON directs volunteers toward under-sampled spatial-temporal gaps.
-
-### 5.2 Implementation Guidelines for Volunteer Organizations
-- **Pareto Menu Presentation**: Present volunteers with 3 named route presets ("Maximum Information", "Balanced", "Maximum Diversity") rather than exposing hyperparameter sliders ($\lambda$).
-- **Observer Protocol Tailoring**: Match observation durations to volunteer skill profiles (e.g., 5–10 min counts for beginners focusing on conspicuous vocalizers vs. 15–20 min counts for advanced observers recording cryptic species).
-- **Pedestrian Greenway Integration**: Encourage urban walking circuits using OSRM walking profiles (4.5 km/h) to support transit-oriented, car-free citizen science participation.
+   OVON directed volunteers toward under-sampled spatial-temporal gaps rather than redundant historical hotspots.
 
 ---
 
@@ -181,4 +152,3 @@ The complete OVON codebase, test suite, and interactive dashboard are open-sourc
 - **CLI Harness**: `python -m ovon.cli run-experiment`
 - **Streamlit Web App**: `python -m ovon.cli dashboard`
 - **Test Suite**: 55 passing unit tests (`pytest`)
-- **Documentation**: `01_RESEARCH_LANDSCAPE.md` through `09_URBAN_PEDESTRIAN_STRATEGY.md`
