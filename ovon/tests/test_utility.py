@@ -6,9 +6,27 @@ from ovon.utility.metrics import (
     calculate_qbc_disagreement,
     spatial_habitat_kernel,
     calculate_site_redundancy_to_history,
-    compute_set_utility
+    compute_set_utility,
+    temporal_cyclic_distance,
+    temporal_kernel
 )
 from ovon.synthetic.generator import generate_synthetic_dataset
+
+def test_temporal_cyclic_kernel():
+    # Week 1 vs Week 52 (cyclic difference is 1 week)
+    d_cyclic = temporal_cyclic_distance(1, 52)
+    assert d_cyclic == 1.0
+
+    # Same week -> kernel = 1.0
+    k_same = temporal_kernel(18, 18)
+    assert k_same == pytest.approx(1.0)
+
+    # 1 week apart vs 12 weeks apart (1 week apart should have significantly higher similarity)
+    k_1wk = temporal_kernel(18, 19, length_time_weeks=4.0)
+    k_12wk = temporal_kernel(18, 30, length_time_weeks=4.0)
+    assert k_1wk > k_12wk
+    assert k_1wk > 0.90
+    assert k_12wk < 0.05
 
 def test_bernoulli_entropy():
     # Entropy should be zero at boundary 0 and 1

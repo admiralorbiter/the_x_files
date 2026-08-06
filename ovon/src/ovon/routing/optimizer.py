@@ -87,6 +87,7 @@ def build_greedy_route(
     start_site_id: int,
     budget_minutes: float,
     lambda_redundancy: float = 0.5,
+    survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
@@ -104,7 +105,7 @@ def build_greedy_route(
     visited_ids: Set[int] = {start_site_id}
 
     current_utility = compute_set_utility(
-        current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy
+        current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week
     )
 
     while True:
@@ -129,7 +130,7 @@ def build_greedy_route(
                 continue
 
             new_utility = compute_set_utility(
-                test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy
+                test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week
             )
             marginal_u = new_utility - current_utility
 
@@ -178,6 +179,7 @@ def refine_route_local_search(
     route: RouteSolution,
     dataset: SyntheticDataset,
     lambda_redundancy: float = 0.5,
+    survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
@@ -208,7 +210,7 @@ def refine_route_local_search(
                         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
                     )
                     if tot_m <= budget:
-                        new_u = compute_set_utility(new_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy)
+                        new_u = compute_set_utility(new_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
                         cur_travel = calculate_route_travel_time(current_ids, dataset.travel_time_matrix, return_to_hub=return_to_hub)
                         if t_m < cur_travel - 1e-4:
                             current_ids = new_ids
@@ -233,8 +235,8 @@ def refine_route_local_search(
                 )
                 
                 if tot_m <= budget:
-                    cur_u = compute_set_utility(current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy)
-                    new_u = compute_set_utility(test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy)
+                    cur_u = compute_set_utility(current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
+                    new_u = compute_set_utility(test_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
                     if new_u > cur_u + 1e-5:
                         current_ids = test_ids
                         current_stops = test_stops
@@ -247,7 +249,7 @@ def refine_route_local_search(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
-    final_u = compute_set_utility(current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy)
+    final_u = compute_set_utility(current_stops, dataset.existing_observations, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
 
     return RouteSolution(
         sites=current_stops,

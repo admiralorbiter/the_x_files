@@ -36,15 +36,28 @@ def calculate_qbc_disagreement(bootstrap_preds: np.ndarray) -> np.ndarray:
     qbc = entropy_of_mean - mean_of_entropy
     return np.maximum(0.0, qbc)
 
+def temporal_cyclic_distance(week1: int, week2: int) -> float:
+    """Calculate cyclic annual week distance in [0, 26] weeks."""
+    diff = abs(int(week1) - int(week2))
+    return float(min(diff, 52 - diff))
+
+def temporal_kernel(week1: int, week2: int, length_time_weeks: float = 4.0) -> float:
+    """Compute Gaussian similarity decay across annual observation weeks."""
+    d_time = temporal_cyclic_distance(week1, week2)
+    return float(np.exp(-(d_time**2) / (2.0 * length_time_weeks**2)))
+
 def spatial_habitat_kernel(
     x1: float, y1: float, hab1: np.ndarray,
     x2: float, y2: float, hab2: np.ndarray,
+    week1: Optional[int] = None,
+    week2: Optional[int] = None,
     spatial_length_km: float = 10.0,
     length_habitat: float = 0.5,
+    length_time_weeks: float = 4.0,
     length_spatial: Optional[float] = None
 ) -> float:
     """
-    Compute pairwise Gaussian similarity kernel across space (km) and habitat.
+    Compute pairwise Gaussian similarity kernel across space (km), habitat, and cyclical annual week.
     """
     if length_spatial is not None:
         spatial_length_km = length_spatial
@@ -56,17 +69,23 @@ def spatial_habitat_kernel(
     k_space = np.exp(-d_space_sq / (2.0 * spatial_length_km**2))
     k_hab = np.exp(-d_hab_sq / (2.0 * length_habitat**2))
 
-    return float(k_space * k_hab)
+    k_time = 1.0
+    if week1 is not None and week2 is not None:
+        k_time = temporal_kernel(week1, week2, length_time_weeks=length_time_weeks)
+
+    return float(k_space * k_hab * k_time)
 
 def calculate_site_redundancy_to_history(
     site: CandidateSite,
     existing_observations: List[Any],
+    survey_week: int = 18,
     spatial_length_km: float = 10.0,
     length_habitat: float = 0.5,
+    length_time_weeks: float = 4.0,
     length_spatial: Optional[float] = None
 ) -> float:
     """
-    Calculate normalized redundancy index R(site | D) in [0, 1).
+    Calculate normalized spatiotemporal redundancy index R(site | D, week) in [0, 1).
     """
     if not existing_observations:
         return 0.0
@@ -78,16 +97,20 @@ def calculate_site_redundancy_to_history(
     for obs in existing_observations:
         if isinstance(obs, (tuple, list)):
             obs_x, obs_y, obs_hab = obs[0], obs[1], obs[2]
+            obs_week = obs[3] if len(obs) > 3 else 18
         else:
             obs_x = getattr(obs, "x_km", getattr(obs, "x", 0.0))
             obs_y = getattr(obs, "y_km", getattr(obs, "y", 0.0))
-            obs_hab = getattr(obs, "habitat", np.array([0.33, 0.33, 0.34]))
+            obs_hab = getattr(obs, "habitat", np.array([0.25, 0.25, 0.25, 0.25]))
+            obs_week = getattr(obs, "week", 18)
 
         k = spatial_habitat_kernel(
             site.x, site.y, site.habitat,
             obs_x, obs_y, obs_hab,
+            week1=survey_week, week2=obs_week,
             spatial_length_km=spatial_length_km,
-            length_habitat=length_habitat
+            length_habitat=length_habitat,
+            length_time_weeks=length_time_weeks
         )
         total_coverage += k
 
@@ -102,43 +125,54 @@ def get_species_migratory_weights(species_names: List[str]) -> np.ndarray:
     for i, sp in enumerate(species_names):
         sp_lower = sp.lower()
         if any(kw in sp_lower for kw in MIGRATORY_KEYWORDS):
-            weights[i] = 2.5  # 2.5x weight for seasonal migrants
+            weights[i] = 2.5
         else:
-            weights[i] = 1.0  # 1.0x weight for residents
+            weights[i] = 1.0
 
     return weights / np.sum(weights)
 
 def compute_set_utility(
     selected_sites: List[CandidateSite],
-    existing_observations: List[Tuple[float, float, np.ndarray, int]],
+    existing_observations: List[Any],
     species_weights: Optional[np.ndarray] = None,
     species_names: Optional[List[str]] = None,
     lambda_redundancy: float = 0.5,
-    length_spatial: float = 10.0,
-    length_habitat: float = 0.5
+    survey_week: int = 18,
+    spatial_length_km: float = 10.0,
+    length_habitat: float = 0.5,
+    length_time_weeks: float = 4.0,
+    length_spatial: Optional[float] = None
 ) -> float:
     """
     Compute total multi-species information utility for a set of selected sites A.
     
-    U(A) = sum_s w_s [ sum_{a in A} q(s, a) * (1 - R(a|D)) - lambda * sum_{a,b in A} k(a, b) ]
+    U(A) = sum_s w_s [ sum_{a in A} q(s, a) * (1 - R(a|D, week)) - lambda * sum_{a,b in A} k(a, b) ]
     """
     if not selected_sites:
         return 0.0
 
+    if length_spatial is not None:
+        spatial_length_km = length_spatial
+
     n_species = selected_sites[0].bootstrap_predictions.shape[0]
     if species_weights is None:
         if species_names and len(species_names) == n_species:
-            species_weights = get_species_migratory_weights(species_names)
+            from ovon.data.phenology import get_weekly_species_weights
+            species_weights = get_weekly_species_weights(species_names, survey_week)
         else:
             species_weights = np.ones(n_species) / n_species
 
     total_utility = 0.0
 
-    # 1. Pointwise information value adjusted by historical redundancy
+    # 1. Pointwise information value adjusted by historical spatiotemporal redundancy
     for site in selected_sites:
         qbc_scores = calculate_qbc_disagreement(site.bootstrap_predictions)  # (n_species,)
         redundancy_hist = calculate_site_redundancy_to_history(
-            site, existing_observations, length_spatial, length_habitat
+            site, existing_observations,
+            survey_week=survey_week,
+            spatial_length_km=spatial_length_km,
+            length_habitat=length_habitat,
+            length_time_weeks=length_time_weeks
         )
         site_val = np.sum(species_weights * qbc_scores) * (1.0 - redundancy_hist)
         total_utility += site_val
@@ -153,10 +187,11 @@ def compute_set_utility(
             k_ij = spatial_habitat_kernel(
                 s1.x, s1.y, s1.habitat,
                 s2.x, s2.y, s2.habitat,
-                length_spatial=length_spatial,
-                length_habitat=length_habitat
+                week1=survey_week, week2=survey_week,
+                spatial_length_km=spatial_length_km,
+                length_habitat=length_habitat,
+                length_time_weeks=length_time_weeks
             )
             pairwise_penalty += k_ij
 
-    total_utility -= (lambda_redundancy * 0.005) * pairwise_penalty
-    return float(total_utility)
+    return float(total_utility - (lambda_redundancy * pairwise_penalty))

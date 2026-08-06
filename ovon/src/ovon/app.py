@@ -20,6 +20,7 @@ except ImportError:
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_gbif_kc_birds
 from ovon.data.fetch_urban import build_kc_urban_pedestrian_dataset
 from ovon.data.enviroatlas import fetch_enviroatlas_covariates
+from ovon.data.phenology import get_species_phenology
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
@@ -97,6 +98,7 @@ with st.sidebar.form(key="opt_form"):
 
     budget_min = st.slider("Total Route Time Budget (minutes)", min_value=30, max_value=180, value=75, step=15)
     lambda_red = st.slider("Redundancy Penalty Weight (λ)", min_value=0.0, max_value=2.0, value=0.5, step=0.1)
+    survey_week_val = st.slider("Target Survey Week (Annual 1-52)", min_value=1, max_value=52, value=18, help="Week 18 = Mid-May Peak Spring Migration; Week 34 = Late August")
 
     submit_button = st.form_submit_button(label="🚀 Recalculate Route Solution", use_container_width=True)
 
@@ -104,12 +106,12 @@ dataset = preview_ds
 
 # Run OVON Optimizer (Using Cached Datasets)
 @st.cache_data
-def get_optimized_route(start_idx, budget, lam, mode_name, cache_version: str = CACHE_VERSION):
+def get_optimized_route(start_idx, budget, lam, mode_name, week_num, cache_version: str = CACHE_VERSION):
     ds = get_cached_dataset(mode_name, cache_version)
-    greedy_sol = build_greedy_route(ds, start_site_id=start_idx, budget_minutes=float(budget), lambda_redundancy=lam, return_to_hub=True)
-    return refine_route_local_search(greedy_sol, ds, lambda_redundancy=lam, return_to_hub=True)
+    greedy_sol = build_greedy_route(ds, start_site_id=start_idx, budget_minutes=float(budget), lambda_redundancy=lam, survey_week=week_num, return_to_hub=True)
+    return refine_route_local_search(greedy_sol, ds, lambda_redundancy=lam, survey_week=week_num, return_to_hub=True)
 
-ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode, CACHE_VERSION)
+ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode, survey_week_val, CACHE_VERSION)
 
 # Fetch OSRM Polyline & Turn-by-Turn Steps (Append origin for closed-loop return leg)
 stop_coords = []
@@ -350,9 +352,44 @@ with tab_species:
         st.markdown(f"**Guild Class:** `{sp_meta.guild_class}`")
         st.markdown(f"**Primary Micro-Habitat:** `{sp_meta.primary_habitat}`")
         st.markdown(f"**Conservation Status:** `{sp_meta.conservation_status}`")
+        
+        phen = get_species_phenology(sp_meta.common_name)
+        st.markdown(f"📅 **Annual Migratory Status:** `{phen.migratory_status}`")
         st.info(f"ℹ️ **Species Overview:** {sp_meta.description}")
         if sp_meta.wikipedia_url:
             st.markdown(f"🔗 [Read full species profile on Wikipedia]({sp_meta.wikipedia_url})")
+
+        # 52-Week Annual Relative Abundance & Phenology Curve Chart
+        curr_val = phen.weekly_abundance[survey_week_val - 1]
+        st.subheader(f"📅 52-Week Migration Curve — Target Survey Position: Week {survey_week_val}")
+        st.caption(f"📍 Currently active target survey week is **Week {survey_week_val}** (Relative Seasonal Abundance: **{curr_val*100:.1f}%**). Red vertical line indicates current survey week position.")
+        
+        try:
+            import altair as alt
+            chart_data = pd.DataFrame({
+                "Week": list(range(1, 53)),
+                "Relative Abundance": phen.weekly_abundance
+            })
+            base_line = alt.Chart(chart_data).mark_line(color="#02818a", strokeWidth=3).encode(
+                x=alt.X("Week:Q", title="Annual Week (1 to 52)"),
+                y=alt.Y("Relative Abundance:Q", title="Relative Seasonal Abundance")
+            )
+            rule = alt.Chart(pd.DataFrame({"Week": [survey_week_val]})).mark_rule(color="#e31a1c", strokeWidth=2, strokeDash=[4, 4]).encode(
+                x="Week:Q"
+            )
+            point = alt.Chart(pd.DataFrame({"Week": [survey_week_val], "Relative Abundance": [curr_val]})).mark_point(color="#e31a1c", size=120, filled=True).encode(
+                x="Week:Q",
+                y="Relative Abundance:Q"
+            )
+            st.altair_chart((base_line + rule + point).properties(height=280), use_container_width=True)
+        except Exception:
+            marker_col = np.array([curr_val if w == survey_week_val else None for w in range(1, 53)])
+            phen_df = pd.DataFrame({
+                "Annual Week (1-52)": list(range(1, 53)),
+                "52-Week Phenology Curve": phen.weekly_abundance,
+                f"📍 Active Week {survey_week_val} Marker": marker_col
+            }).set_index("Annual Week (1-52)")
+            st.line_chart(phen_df, color=["#02818a", "#e31a1c"])
 
     st.divider()
     sp_col1, sp_col2 = st.columns([1, 2])
