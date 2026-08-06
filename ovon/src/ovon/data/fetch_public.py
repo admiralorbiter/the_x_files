@@ -30,7 +30,7 @@ FALLBACK_KC_PARKS = [
     {"name": "Smithville Lake Conservation Area", "lat": 39.4000, "lon": -94.5767, "type": "State Conservation & Reservoir Area", "habitat": [0.5, 0.4, 0.1]},
     {"name": "Burr Oak Woods Conservation Area", "lat": 39.0433, "lon": -94.2717, "type": "Nature Preserve & Creek Corridor", "habitat": [0.7, 0.2, 0.1]},
     {"name": "Union Station Plaza & Fountain", "lat": 39.0854, "lon": -94.5857, "type": "Historic Public Plaza & Landmark", "habitat": [0.1, 0.2, 0.7]},
-    {"name": "Overland Park Arboretum & Ponds", "lat": 38.8056, "lon": -94.6733, "type": "Arboretum, Forest & Wetland", "habitat": [0.7, 0.2, 0.1]},
+    {"name": "Overland Park Arboretum & Ponds", "lat": 38.8056, "lon": -94.6733, "type": "Arboretum, Forest & Wetland", "habitat": [0.7, 0.2, 0.1]}
 ]
 
 FALLBACK_KC_BIRDS = [
@@ -40,7 +40,7 @@ FALLBACK_KC_BIRDS = [
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate geodesic distance between two points in km."""
-    R = 6371.0  # Earth radius in km
+    R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat / 2.0) ** 2 +
@@ -55,8 +55,7 @@ def fetch_kc_parks_overpass(
     timeout: int = 10
 ) -> List[Dict[str, Any]]:
     """
-    Fetch public parks, fountains, plazas, and landmarks in Greater Kansas City via OpenStreetMap Overpass API.
-    Falls back to curated KC public landmarks list if network call fails or times out.
+    Fetch public parks, fountains, plazas, and landmarks in Greater Kansas City via OSM Overpass API.
     """
     radius_meters = int(radius_km * 1000)
     overpass_url = "https://overpass-api.de/api/interpreter"
@@ -108,11 +107,11 @@ def fetch_gbif_kc_birds(
     timeout: int = 10
 ) -> List[Dict[str, Any]]:
     """
-    Fetch real bird observation records in Greater Kansas City from GBIF.
+    Fetch real presence-only bird observation records in Greater Kansas City from GBIF.
     """
     gbif_url = "https://api.gbif.org/v1/occurrence/search"
     params = {
-        "taxonKey": 212,  # Aves (Birds)
+        "taxonKey": 212,
         "decimalLatitude": f"{center_lat - 0.5},{center_lat + 0.5}",
         "decimalLongitude": f"{center_lon - 0.5},{center_lon + 0.5}",
         "limit": limit,
@@ -171,7 +170,7 @@ def build_kc_real_dataset(
     species_list = sorted(list(set([o["species"] for o in gbif_obs if o.get("species")])))
     if len(species_list) < 4:
         species_list = FALLBACK_KC_BIRDS
-    species_list = species_list[:8]  # Portfolio of 8 focal species
+    species_list = species_list[:8]
     n_species = len(species_list)
 
     candidate_sites: List[CandidateSite] = []
@@ -184,7 +183,6 @@ def build_kc_real_dataset(
         covs = fetch_enviroatlas_covariates(lat, lon, location_name=park.get("name"))
         hab = covariates_to_habitat_vector(covs)
 
-        # Convert lat/lon offset to approximate km relative to center
         y_km = (lat - center_lat) * 111.0
         x_km = (lon - center_lon) * 111.0 * math.cos(math.radians(center_lat))
 
@@ -211,7 +209,6 @@ def build_kc_real_dataset(
         )
         candidate_sites.append(site)
 
-    # Compute road driving travel time matrix
     travel_time_matrix = np.zeros((n_sites, n_sites))
     for i in range(n_sites):
         for j in range(n_sites):
@@ -222,7 +219,6 @@ def build_kc_real_dataset(
                 dist_road = dist_direct * road_winding_factor
                 travel_time_matrix[i, j] = (dist_road / avg_speed_kmh) * 60.0
 
-    # Past observations format using ExistingObservation dataclass
     existing_obs = [
         ExistingObservation(
             x_km=(o["lon"] - center_lon) * 111.0 * math.cos(math.radians(center_lat)),
@@ -236,17 +232,17 @@ def build_kc_real_dataset(
     ]
 
     try:
-        from ovon.data.ebird import fetch_ebird_kc_checklists, ebird_checklists_to_existing_observations
-        ebird_cls = fetch_ebird_kc_checklists(region_code="US-MO-095")
-        ebird_obs = ebird_checklists_to_existing_observations(ebird_cls, center_lat=center_lat, center_lon=center_lon)
+        from ovon.data.ebird import fetch_recent_ebird_occurrences, ebird_checklists_to_existing_observations
+        ebird_res = fetch_recent_ebird_occurrences(region_code="US-MO-095")
+        ebird_obs = ebird_checklists_to_existing_observations(ebird_res.records, center_lat=center_lat, center_lon=center_lon)
         existing_obs.extend(ebird_obs)
     except Exception:
         pass
 
     try:
-        from ovon.data.inaturalist import fetch_inaturalist_kc_observations, inaturalist_records_to_existing_observations
-        inat_recs = fetch_inaturalist_kc_observations(center_lat=center_lat, center_lon=center_lon)
-        inat_obs = inaturalist_records_to_existing_observations(inat_recs, center_lat=center_lat, center_lon=center_lon)
+        from ovon.data.inaturalist import fetch_inaturalist_kc_occurrences, inaturalist_records_to_existing_observations
+        inat_res = fetch_inaturalist_kc_occurrences(center_lat=center_lat, center_lon=center_lon)
+        inat_obs = inaturalist_records_to_existing_observations(inat_res.records, center_lat=center_lat, center_lon=center_lon)
         existing_obs.extend(inat_obs)
     except Exception:
         pass

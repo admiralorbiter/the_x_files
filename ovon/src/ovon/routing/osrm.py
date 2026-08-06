@@ -3,6 +3,8 @@ import requests
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 
+from ovon.routing.routing_provider import RoutingProvider, Coordinate, RouteGeometry
+
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate geodesic distance between two points in km."""
     R = 6371.0
@@ -39,7 +41,7 @@ def fallback_geodesic_route(
         "distance_km": dist_road,
         "polyline_coords": polyline,
         "steps": [
-            f"{action_verb} from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via pedestrian path network (~{dist_road:.1f} km)" if profile == "walking" else f"Drive from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via local roads (~{dist_road:.1f} km)"
+            f"{action_verb} from ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f}) via path network (~{dist_road:.1f} km)"
         ],
         "is_fallback": True
     }
@@ -50,8 +52,7 @@ def fetch_osrm_route(
     timeout: int = 5
 ) -> Dict[str, Any]:
     """
-    Fetch exact route from Open Source Routing Machine (OSRM) public API for driving or walking profile.
-    Returns duration, distance, snapped polyline coordinates, and turn-by-turn steps.
+    Fetch exact route from OSRM API for driving or walking profile.
     """
     osrm_profile = "walking" if profile in ["walking", "foot"] else "driving"
     url = f"https://router.project-osrm.org/route/v1/{osrm_profile}/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
@@ -94,7 +95,7 @@ def fetch_osrm_route(
         pass
 
     fallback_speed = 4.5 if osrm_profile == "walking" else 40.0
-    return fallback_geodesic_route(start_lat, start_lon, end_lat, end_lon, speed_kmh=fallback_speed)
+    return fallback_geodesic_route(start_lat, start_lon, end_lat, end_lon, speed_kmh=fallback_speed, profile=profile)
 
 def fetch_osrm_multistop_route(
     coords: List[Tuple[float, float]],
@@ -102,7 +103,7 @@ def fetch_osrm_multistop_route(
     timeout: int = 6
 ) -> Dict[str, Any]:
     """
-    Fetch multi-stop driving or walking itinerary polyline and step instructions across a sequence of stops.
+    Fetch multi-stop driving or walking itinerary polyline across a sequence of stops.
     """
     if len(coords) < 2:
         return {"duration_min": 0.0, "distance_km": 0.0, "polyline_coords": [], "steps": [], "is_fallback": False}
@@ -129,7 +130,7 @@ def fetch_osrm_multistop_route(
                     steps_list.append(f"--- Leg {leg_idx+1}: Stop {leg_idx+1} to Stop {leg_idx+2} ---")
                     for step in leg.get("steps", []):
                         name = step.get("name", "road")
-                        maneuver = step.get("maneuver", {}).get("type", "drive")
+                        maneuver = step.get("maneuver", {}).get("type", "walk" if osrm_profile == "walking" else "drive")
                         dist_mi = (step.get("distance", 0.0) / 1000.0) * 0.621371
                         if dist_mi > 0.05:
                             steps_list.append(f"  • {maneuver.title()} on {name if name else 'connecting route'} ({dist_mi:.1f} mi)")
@@ -151,11 +152,12 @@ def fetch_osrm_multistop_route(
     all_steps = []
 
     for i in range(len(coords) - 1):
-        leg_res = fallback_geodesic_route(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
+        leg_res = fallback_geodesic_route(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1], profile=profile)
         total_dur += leg_res["duration_min"]
         total_dist += leg_res["distance_km"]
         all_polylines.extend(leg_res["polyline_coords"])
-        all_steps.append(f"Leg {i+1}: Drive {leg_res['distance_km']:.1f} km")
+        action = "Walk" if profile in ["walking", "foot"] else "Drive"
+        all_steps.append(f"Leg {i+1}: {action} {leg_res['distance_km']:.1f} km")
 
     return {
         "duration_min": total_dur,
@@ -164,3 +166,37 @@ def fetch_osrm_multistop_route(
         "steps": all_steps,
         "is_fallback": True
     }
+
+class OSRMProvider:
+    """Implementation of RoutingProvider protocol backed by OSRM API."""
+
+    def duration_matrix(
+        self,
+        coordinates: List[Coordinate],
+        mode: str = "walking"
+    ) -> np.ndarray:
+        n = len(coordinates)
+        matrix = np.zeros((n, n), dtype=float)
+        speed_kmh = 4.5 if mode in ["walking", "foot"] else 40.0
+        winding = 1.25 if mode in ["walking", "foot"] else 1.3
+
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    d_km = haversine_distance_km(coordinates[i].lat, coordinates[i].lon, coordinates[j].lat, coordinates[j].lon) * winding
+                    matrix[i, j] = (d_km / speed_kmh) * 60.0
+        return matrix
+
+    def route_geometry(
+        self,
+        ordered_coordinates: List[Coordinate],
+        mode: str = "walking"
+    ) -> RouteGeometry:
+        pts = [(c.lat, c.lon) for c in ordered_coordinates]
+        res = fetch_osrm_multistop_route(pts, profile=mode)
+        return RouteGeometry(
+            coordinates=[(pt[0], pt[1]) for pt in res.get("polyline_coords", [])],
+            distance_meters=res.get("distance_km", 0.0) * 1000.0,
+            duration_seconds=res.get("duration_min", 0.0) * 60.0,
+            instructions=res.get("steps", [])
+        )

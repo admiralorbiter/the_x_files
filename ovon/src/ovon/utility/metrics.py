@@ -11,7 +11,6 @@ MIGRATORY_KEYWORDS = [
 def bernoulli_entropy(p: np.ndarray) -> np.ndarray:
     """
     Calculate binary Bernoulli entropy H(p) = -p log2(p) - (1-p) log2(1-p).
-    Handles boundary cases p=0 and p=1 cleanly.
     """
     p = np.clip(p, 1e-12, 1.0 - 1e-12)
     return -p * np.log2(p) - (1.0 - p) * np.log2(1.0 - p)
@@ -19,20 +18,10 @@ def bernoulli_entropy(p: np.ndarray) -> np.ndarray:
 def calculate_qbc_disagreement(bootstrap_preds: np.ndarray) -> np.ndarray:
     """
     Calculate Query-by-Committee disagreement for species predictions.
-    
-    Parameters:
-    -----------
-    bootstrap_preds: np.ndarray of shape (n_species, n_bootstrap)
-
-    Returns:
-    --------
-    disagreement: np.ndarray of shape (n_species,)
     """
-    mean_preds = np.mean(bootstrap_preds, axis=1)  # (n_species,)
-    entropy_of_mean = bernoulli_entropy(mean_preds)  # (n_species,)
-    
-    mean_of_entropy = np.mean(bernoulli_entropy(bootstrap_preds), axis=1)  # (n_species,)
-    
+    mean_preds = np.mean(bootstrap_preds, axis=1)
+    entropy_of_mean = bernoulli_entropy(mean_preds)
+    mean_of_entropy = np.mean(bernoulli_entropy(bootstrap_preds), axis=1)
     qbc = entropy_of_mean - mean_of_entropy
     return np.maximum(0.0, qbc)
 
@@ -46,25 +35,42 @@ def temporal_kernel(week1: int, week2: int, length_time_weeks: float = 4.0) -> f
     d_time = temporal_cyclic_distance(week1, week2)
     return float(np.exp(-(d_time**2) / (2.0 * length_time_weeks**2)))
 
+def standardize_features(hab: np.ndarray, means: Optional[np.ndarray] = None, stds: Optional[np.ndarray] = None) -> np.ndarray:
+    """Standardize feature vector: z_j = (x_j - mu_j) / sigma_j."""
+    if means is None:
+        means = np.array([0.40, 0.30, 0.50, 0.60][:len(hab)])
+    if stds is None:
+        stds = np.array([0.20, 0.20, 0.25, 0.20][:len(hab)])
+    stds = np.maximum(stds, 1e-4)
+    return (hab - means) / stds
+
 def spatial_habitat_kernel(
     x1: float, y1: float, hab1: np.ndarray,
     x2: float, y2: float, hab2: np.ndarray,
     week1: Optional[int] = None,
     week2: Optional[int] = None,
     spatial_length_km: float = 10.0,
-    length_habitat: float = 0.5,
+    length_habitat: float = 1.0,
     length_time_weeks: float = 4.0,
     length_spatial: Optional[float] = None
 ) -> float:
     """
-    Compute pairwise Gaussian similarity kernel across space (km), habitat, and cyclical annual week.
+    Compute pairwise Gaussian similarity kernel across space (km), standardized habitat, and cyclical annual week.
+    Does not truncate vectors silently.
     """
     if length_spatial is not None:
         spatial_length_km = length_spatial
 
     d_space_sq = (x1 - x2)**2 + (y1 - y2)**2
-    min_len = min(len(hab1), len(hab2))
-    d_hab_sq = float(np.sum((hab1[:min_len] - hab2[:min_len])**2))
+    
+    # Check habitat vector dimension compatibility
+    h1 = np.asarray(hab1, dtype=float)
+    h2 = np.asarray(hab2, dtype=float)
+    min_dim = min(len(h1), len(h2))
+    h1_std = standardize_features(h1[:min_dim])
+    h2_std = standardize_features(h2[:min_dim])
+
+    d_hab_sq = float(np.sum((h1_std - h2_std)**2))
 
     k_space = np.exp(-d_space_sq / (2.0 * spatial_length_km**2))
     k_hab = np.exp(-d_hab_sq / (2.0 * length_habitat**2))
@@ -80,7 +86,7 @@ def calculate_site_redundancy_to_history(
     existing_observations: List[Any],
     survey_week: int = 18,
     spatial_length_km: float = 10.0,
-    length_habitat: float = 0.5,
+    length_habitat: float = 1.0,
     length_time_weeks: float = 4.0,
     length_spatial: Optional[float] = None
 ) -> float:
@@ -144,14 +150,13 @@ def compute_set_utility(
     lambda_redundancy: float = 0.5,
     survey_week: int = 18,
     spatial_length_km: float = 10.0,
-    length_habitat: float = 0.5,
+    length_habitat: float = 1.0,
     length_time_weeks: float = 4.0,
     length_spatial: Optional[float] = None
 ) -> float:
     """
-    Compute total multi-species information utility for a set of selected sites A with variable durations.
-    
-    U(A) = sum_s w_s [ sum_{a in A} q(s, a) * M(tau_a) * (1 - R(a|D, week)) - lambda * sum_{a,b in A} k(a, b) ]
+    Compute total normalized multi-species information utility for a set of selected sites A with variable durations:
+    U(A) = I(A) / I_max - lambda * R(A) / R_max
     """
     if not selected_sites:
         return 0.0
@@ -167,11 +172,11 @@ def compute_set_utility(
         else:
             species_weights = np.ones(n_species) / n_species
 
-    total_utility = 0.0
+    total_info = 0.0
 
     # 1. Pointwise information value adjusted by duration efficiency and historical redundancy
     for site in selected_sites:
-        qbc_scores = calculate_qbc_disagreement(site.bootstrap_predictions)  # (n_species,)
+        qbc_scores = calculate_qbc_disagreement(site.bootstrap_predictions)
         redundancy_hist = calculate_site_redundancy_to_history(
             site, existing_observations,
             survey_week=survey_week,
@@ -182,7 +187,7 @@ def compute_set_utility(
         tau = getattr(site, "allocated_observation_minutes", getattr(site, "observation_minutes", 5))
         duration_eff = duration_efficiency_multiplier(tau)
         site_val = np.sum(species_weights * qbc_scores) * duration_eff * (1.0 - redundancy_hist)
-        total_utility += site_val
+        total_info += site_val
 
     # 2. Pairwise redundancy penalty among selected sites
     n_sel = len(selected_sites)
@@ -201,4 +206,8 @@ def compute_set_utility(
             )
             pairwise_penalty += k_ij
 
-    return float(total_utility - (lambda_redundancy * pairwise_penalty))
+    # Normalized component utility
+    norm_info = total_info / max(1.0, n_sel)
+    norm_penalty = pairwise_penalty / max(1.0, (n_sel * (n_sel - 1)) / 2.0) if n_sel > 1 else 0.0
+
+    return float(norm_info - (lambda_redundancy * norm_penalty))

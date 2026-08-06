@@ -6,6 +6,7 @@ import numpy as np
 
 from ovon.synthetic.generator import ExistingObservation
 from ovon.data.enviroatlas import fetch_enviroatlas_covariates, covariates_to_habitat_vector
+from ovon.data.ebird import DataResult
 
 @dataclass
 class iNaturalistRecord:
@@ -21,8 +22,8 @@ class iNaturalistRecord:
     image_url: Optional[str] = None
     uri: Optional[str] = None
 
-# Real Curated Research-Grade iNaturalist Sightings across Greater Kansas City & Rural State Reserves
-FALLBACK_INAT_RECORDS: List[Dict[str, Any]] = [
+# Demonstration Fixtures for iNaturalist Presence-Only Observations
+DEMO_INATURALIST_OCCURRENCES: List[Dict[str, Any]] = [
     {
         "id": 101001,
         "species_name": "Passerina cyanea",
@@ -70,67 +71,22 @@ FALLBACK_INAT_RECORDS: List[Dict[str, Any]] = [
         "quality_grade": "research",
         "user_login": "kansas_field_botany",
         "loc_name": "Hillsdale State Park & Wetlands (South)"
-    },
-    {
-        "id": 101005,
-        "species_name": "Falco peregrinus",
-        "common_name": "Peregrine Falcon",
-        "lat": 39.3215,
-        "lon": -94.2151,
-        "observed_on": "2024-05-15",
-        "week": 20,
-        "quality_grade": "research",
-        "user_login": "clay_county_birds",
-        "loc_name": "Excelsior Springs Rural Greenway"
-    },
-    {
-        "id": 101006,
-        "species_name": "Dumetella carolinensis",
-        "common_name": "Gray Catbird",
-        "lat": 38.8125,
-        "lon": -94.9215,
-        "observed_on": "2024-05-19",
-        "week": 20,
-        "quality_grade": "research",
-        "user_login": "jo_co_parks",
-        "loc_name": "Ernie Miller Nature Center (Olathe)"
-    },
-    {
-        "id": 101007,
-        "species_name": "Chaetura pelagica",
-        "common_name": "Chimney Swift",
-        "lat": 39.3012,
-        "lon": -94.9012,
-        "observed_on": "2024-05-22",
-        "week": 21,
-        "quality_grade": "research",
-        "user_login": "leavenworth_audubon",
-        "loc_name": "Platte Falls Conservation Area (Platte City)"
-    },
-    {
-        "id": 101008,
-        "species_name": "Junco hyemalis",
-        "common_name": "Dark-eyed Junco",
-        "lat": 38.7051,
-        "lon": -94.4421,
-        "observed_on": "2024-01-12",
-        "week": 2,
-        "quality_grade": "research",
-        "user_login": "cass_county_nature",
-        "loc_name": "Peculiar & Harrisonville Prairie Reserve"
     }
 ]
 
-def fetch_inaturalist_kc_observations(
+# Legacy alias
+FALLBACK_INAT_RECORDS = DEMO_INATURALIST_OCCURRENCES
+
+def fetch_inaturalist_kc_occurrences(
     center_lat: float = 39.0997,
     center_lon: float = -94.5786,
     radius_km: float = 45.0,
     limit: int = 200,
     timeout: int = 5
-) -> List[iNaturalistRecord]:
+) -> DataResult[iNaturalistRecord]:
     """
     Fetch research-grade bird observations across Greater Kansas City from iNaturalist Open API.
-    Queries live public API with automatic fallback to curated regional dataset.
+    Returns DataResult with provenance metadata.
     """
     url = "https://api.inaturalist.org/v1/observations"
     params = {
@@ -159,7 +115,6 @@ def fetch_inaturalist_kc_observations(
                     obs_date = item.get("observed_on", "2024-05-18")
                     user = item.get("user", {}).get("login", "inat_user")
                     
-                    # Parse week
                     try:
                         dt = obs_date.split("-")
                         month = int(dt[1])
@@ -185,12 +140,16 @@ def fetch_inaturalist_kc_observations(
                         uri=item.get("uri")
                     ))
             if records:
-                return records
+                return DataResult(
+                    records=records,
+                    source_name="iNaturalist API v1 research occurrences",
+                    source_type="live_api"
+                )
     except Exception:
         pass
 
-    # Fallback to curated Kansas City iNaturalist dataset
-    for item in FALLBACK_INAT_RECORDS:
+    # Fallback to curated demo dataset
+    for item in DEMO_INATURALIST_OCCURRENCES:
         records.append(iNaturalistRecord(
             id=item["id"],
             species_name=item["species_name"],
@@ -202,7 +161,25 @@ def fetch_inaturalist_kc_observations(
             quality_grade=item["quality_grade"],
             user_login=item["user_login"]
         ))
-    return records
+    return DataResult(
+        records=records,
+        source_name="Curated Kansas City iNaturalist Demo Fixtures",
+        source_type="curated_demo",
+        warning="Using curated demo fixtures. Live API call unavailable."
+    )
+
+def fetch_inaturalist_kc_observations(
+    center_lat: float = 39.0997,
+    center_lon: float = -94.5786,
+    radius_km: float = 45.0,
+    limit: int = 200,
+    timeout: int = 5
+) -> List[iNaturalistRecord]:
+    """Legacy helper returning list of records."""
+    res = fetch_inaturalist_kc_occurrences(
+        center_lat=center_lat, center_lon=center_lon, radius_km=radius_km, limit=limit, timeout=timeout
+    )
+    return res.records
 
 def inaturalist_records_to_existing_observations(
     records: List[iNaturalistRecord],
@@ -210,8 +187,7 @@ def inaturalist_records_to_existing_observations(
     center_lon: float = -94.5786
 ) -> List[ExistingObservation]:
     """
-    Convert iNaturalist research-grade records into OVON ExistingObservation objects
-    with spatial offsets, real EnviroAtlas environmental vectors, and observation week.
+    Convert iNaturalist research-grade records into ExistingObservation objects.
     """
     existing_obs: List[ExistingObservation] = []
     for r in records:

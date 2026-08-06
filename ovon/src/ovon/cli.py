@@ -7,6 +7,8 @@ import numpy as np
 from ovon.config import ProjectConfig
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_kc_parks_overpass, fetch_gbif_kc_birds
+from ovon.data.ebird import fetch_recent_ebird_occurrences
+from ovon.data.inaturalist import fetch_inaturalist_kc_occurrences
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
 from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
@@ -22,6 +24,32 @@ def cli():
     """Optimal Volunteer Observation Network (OVON) CLI"""
     pass
 
+@cli.command(name="fetch-data")
+@click.option("--region", default="US-MO-095", help="eBird region code for fetch.")
+def fetch_data(region: str):
+    """Download public datasets (GBIF, iNaturalist, OSM) and rebuild local cache."""
+    click.echo(f"=== OVON Data Rebuild & Fetch Pipeline ({region}) ===")
+    
+    click.echo("1. Fetching OpenStreetMap Kansas City public parks & landmarks...")
+    parks = fetch_kc_parks_overpass()
+    click.echo(f"   ✓ Retreived {len(parks)} spatial candidate landmarks.")
+
+    click.echo("2. Fetching GBIF presence-only bird occurrence records...")
+    birds = fetch_gbif_kc_birds()
+    click.echo(f"   ✓ Retreived {len(birds)} GBIF occurrence records.")
+
+    click.echo("3. Querying eBird recent occurrence endpoint...")
+    ebird_res = fetch_recent_ebird_occurrences(region_code=region)
+    click.echo(f"   ✓ Source: {ebird_res.source_name} ({ebird_res.source_type})")
+    click.echo(f"   ✓ Retreived {len(ebird_res.records)} recent eBird sightings.")
+
+    click.echo("4. Querying iNaturalist research-grade occurrences...")
+    inat_res = fetch_inaturalist_kc_occurrences()
+    click.echo(f"   ✓ Source: {inat_res.source_name} ({inat_res.source_type})")
+    click.echo(f"   ✓ Retreived {len(inat_res.records)} iNaturalist observations.")
+
+    click.echo("\n✓ Dataset rebuild completed successfully!")
+
 @cli.command(name="model-evaluate")
 @click.option("--n-samples", default=100, help="Number of training samples.")
 @click.option("--n-bootstrap", default=15, help="Number of bootstrap models.")
@@ -33,7 +61,6 @@ def model_evaluate(n_samples: int, n_bootstrap: int):
     click.echo(f"=== Milestone 4: Species Encounter Model Evaluation ===")
     click.echo(f"Focal Portfolio Size: {dataset.n_species} species")
 
-    # Generate synthetic training features and binary detection labels for each species
     coords = np.zeros((n_samples, 2))
     X = np.zeros((n_samples, 7))
 

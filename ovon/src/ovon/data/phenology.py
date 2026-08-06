@@ -14,7 +14,6 @@ class SpeciesPhenologyProfile:
 def _gaussian_phenology_curve(peak_week: float, width_weeks: float = 3.0) -> np.ndarray:
     """Generate a smooth Gaussian annual abundance curve over 52 weeks."""
     weeks = np.arange(1, 53)
-    # Handle cyclic wrapping around week 52/1
     d = np.minimum(np.abs(weeks - peak_week), 52 - np.abs(weeks - peak_week))
     return np.exp(-(d**2) / (2.0 * width_weeks**2))
 
@@ -25,8 +24,8 @@ def _bimodal_phenology_curve(peak1: float, peak2: float, width: float = 3.0) -> 
     curve = c1 + c2
     return curve / np.max(curve)
 
-# Kansas City 52-Week Empirical Phenology Database
-KC_SPECIES_PHENOLOGY_DATABASE: Dict[str, SpeciesPhenologyProfile] = {
+# Kansas City Provisional Phenology Priors
+KC_PROVISIONAL_PHENOLOGY_PRIORS: Dict[str, SpeciesPhenologyProfile] = {
     "Indigo Bunting": SpeciesPhenologyProfile(
         common_name="Indigo Bunting",
         scientific_name="Passerina cyanea",
@@ -85,13 +84,15 @@ KC_SPECIES_PHENOLOGY_DATABASE: Dict[str, SpeciesPhenologyProfile] = {
     )
 }
 
+# Legacy alias
+KC_SPECIES_PHENOLOGY_DATABASE = KC_PROVISIONAL_PHENOLOGY_PRIORS
+
 def get_species_phenology(species_name: str) -> SpeciesPhenologyProfile:
     """Lookup 52-week phenology profile by common or scientific name with fallback."""
-    for name, profile in KC_SPECIES_PHENOLOGY_DATABASE.items():
+    for name, profile in KC_PROVISIONAL_PHENOLOGY_PRIORS.items():
         if species_name.lower() in name.lower() or species_name.lower() in profile.scientific_name.lower():
             return profile
 
-    # Default fallback curve for unknown species (broad summer peak)
     return SpeciesPhenologyProfile(
         common_name=species_name,
         scientific_name=species_name,
@@ -100,10 +101,25 @@ def get_species_phenology(species_name: str) -> SpeciesPhenologyProfile:
         weekly_abundance=_gaussian_phenology_curve(20.0, width_weeks=5.0)
     )
 
+def fit_empirical_cyclic_phenology(
+    weekly_detections: np.ndarray,
+    weekly_checklists: np.ndarray
+) -> np.ndarray:
+    """
+    Derive empirical phenology curve from complete eBird checklists using cyclic proportion smoothing:
+    p_hat_{s,w} = detections / checklists.
+    """
+    raw_p = np.where(weekly_checklists > 0, weekly_detections / weekly_checklists, 0.0)
+    # Apply 3-week cyclic moving average kernel smoothing
+    kernel = np.array([0.25, 0.5, 0.25])
+    padded = np.concatenate([raw_p[-1:], raw_p, raw_p[:1]])
+    smoothed = np.convolve(padded, kernel, mode="valid")
+    max_val = np.max(smoothed)
+    return smoothed / max_val if max_val > 0 else smoothed
+
 def get_weekly_species_weights(species_names: List[str], week: int) -> np.ndarray:
     """
     Compute dynamic, time-varying species optimization weights w_{s,t} for a target week t in [1, 52].
-    Scales species priority by seasonal relative presence A_{s,t} and migratory status.
     """
     week_idx = int(np.clip(week - 1, 0, 51))
     weights = np.zeros(len(species_names), dtype=float)
@@ -112,7 +128,6 @@ def get_weekly_species_weights(species_names: List[str], week: int) -> np.ndarra
         prof = get_species_phenology(sp)
         abundance_t = float(prof.weekly_abundance[week_idx])
         
-        # Priority multiplier based on migratory urgency
         if "Neotropical" in prof.migratory_status or "Transient" in prof.migratory_status:
             multiplier = 3.0
         elif "Winter" in prof.migratory_status:

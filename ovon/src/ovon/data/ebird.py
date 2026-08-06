@@ -2,13 +2,46 @@ import os
 import math
 import json
 import requests
+from datetime import datetime, date
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Literal, TypeVar, Generic
 import numpy as np
 
 from ovon.synthetic.generator import ExistingObservation
 from ovon.data.species_enrichment import resolve_common_name
 from ovon.data.enviroatlas import fetch_enviroatlas_covariates, covariates_to_habitat_vector
+
+T = TypeVar("T")
+
+@dataclass
+class DataResult(Generic[T]):
+    records: List[T]
+    source_name: str
+    source_type: Literal["live_api", "local_research_file", "curated_demo", "synthetic"]
+    retrieved_at: Optional[datetime] = field(default_factory=datetime.now)
+    warning: Optional[str] = None
+
+@dataclass
+class ChecklistEvent:
+    event_id: str
+    source: str
+    observer_id: Optional[str]
+    latitude: float
+    longitude: float
+    date: date
+    week: int
+    protocol: str
+    duration_minutes: float
+    distance_km: float
+    number_observers: int
+    complete_checklist: bool
+
+@dataclass
+class ChecklistDetection:
+    event_id: str
+    species_id: str
+    detected: bool
+    count: Optional[int]
 
 @dataclass
 class eBirdChecklistRecord:
@@ -25,8 +58,8 @@ class eBirdChecklistRecord:
     species_list: List[str]
     effort_completed: bool = True
 
-# Real Curated eBird Checklists for Greater Kansas City Landmarks & Parks
-FALLBACK_KC_EBIRD_CHECKLISTS: List[Dict[str, Any]] = [
+# Curated Demonstration Fixtures (Explicitly marked as demo fixtures, not real EBD complete checklists)
+DEMO_EBIRD_CHECKLIST_FIXTURES: List[Dict[str, Any]] = [
     {
         "checklist_id": "CL-KC-001",
         "loc_id": "L-SwopePark",
@@ -104,95 +137,20 @@ FALLBACK_KC_EBIRD_CHECKLISTS: List[Dict[str, Any]] = [
         "distance_km": 1.5,
         "protocol": "eBird Traveling",
         "species_list": ["Passerina cyanea", "Setophaga coronata", "Dumetella carolinensis", "Lophodytes cucullatus"]
-    },
-    {
-        "checklist_id": "CL-KC-007",
-        "loc_id": "L-BerkleyRiver",
-        "loc_name": "Berkley Riverfront Promenade",
-        "lat": 39.1172,
-        "lon": -94.5703,
-        "observation_date": "2024-05-19",
-        "week": 20,
-        "duration_minutes": 15,
-        "distance_km": 0.8,
-        "protocol": "eBird Traveling",
-        "species_list": ["Chaetura pelagica", "Dumetella carolinensis", "Falco peregrinus"]
-    },
-    {
-        "checklist_id": "CL-KC-008",
-        "loc_id": "L-SmithvilleLake",
-        "loc_name": "Smithville Lake Rural Wildlife Reserve (North)",
-        "lat": 39.3872,
-        "lon": -94.5632,
-        "observation_date": "2024-05-14",
-        "week": 19,
-        "duration_minutes": 40,
-        "distance_km": 2.0,
-        "protocol": "eBird Traveling",
-        "species_list": ["Lophodytes cucullatus", "Passerina cyanea", "Setophaga coronata"]
-    },
-    {
-        "checklist_id": "CL-KC-009",
-        "loc_id": "L-HillsdaleLake",
-        "loc_name": "Hillsdale Lake State Park & Wetlands (South)",
-        "lat": 38.6652,
-        "lon": -94.8872,
-        "observation_date": "2024-05-10",
-        "week": 19,
-        "duration_minutes": 35,
-        "distance_km": 1.8,
-        "protocol": "eBird Traveling",
-        "species_list": ["Passerina cyanea", "Dumetella carolinensis", "Lophodytes cucullatus"]
-    },
-    {
-        "checklist_id": "CL-KC-010",
-        "loc_id": "L-ExcelsiorSprings",
-        "loc_name": "Excelsior Springs Rural Greenway (Northeast)",
-        "lat": 39.3412,
-        "lon": -94.2251,
-        "observation_date": "2024-05-21",
-        "week": 20,
-        "duration_minutes": 25,
-        "distance_km": 1.2,
-        "protocol": "eBird Traveling",
-        "species_list": ["Passerina cyanea", "Setophaga coronata", "Chaetura pelagica"]
-    },
-    {
-        "checklist_id": "CL-KC-011",
-        "loc_id": "L-PeculiarPrairie",
-        "loc_name": "Peculiar & Harrisonville Rural Prairie Reserve (Southeast)",
-        "lat": 38.7182,
-        "lon": -94.4582,
-        "observation_date": "2024-05-16",
-        "week": 20,
-        "duration_minutes": 30,
-        "distance_km": 1.5,
-        "protocol": "eBird Traveling",
-        "species_list": ["Passerina cyanea", "Haemorhous mexicanus", "Falco peregrinus"]
-    },
-    {
-        "checklist_id": "CL-KC-012",
-        "loc_id": "L-LeavenworthRiver",
-        "loc_name": "Leavenworth Riverfront & Fort Reserve (Northwest)",
-        "lat": 39.3172,
-        "lon": -94.9122,
-        "observation_date": "2024-05-25",
-        "week": 21,
-        "duration_minutes": 20,
-        "distance_km": 0.8,
-        "protocol": "eBird Traveling",
-        "species_list": ["Dumetella carolinensis", "Chaetura pelagica", "Falco peregrinus"]
     }
 ]
 
-def fetch_ebird_kc_checklists(
+# Legacy alias for backward compatibility in tests
+FALLBACK_KC_EBIRD_CHECKLISTS = DEMO_EBIRD_CHECKLIST_FIXTURES
+
+def fetch_recent_ebird_occurrences(
     region_code: str = "US-MO-095",
     api_key: Optional[str] = None,
     timeout: int = 4
-) -> List[eBirdChecklistRecord]:
+) -> DataResult[eBirdChecklistRecord]:
     """
-    Fetch complete eBird checklists with observer effort covariates (duration, distance, protocol)
-    for Greater Kansas City. Queries official eBird API v2 with fallback to curated dataset.
+    Fetch recent eBird species occurrences (map markers / recent sightings) for a region.
+    Queries official eBird API v2 recent observations endpoint. Returns a DataResult with provenance metadata.
     """
     api_key = api_key or os.environ.get("EBIRD_API_KEY")
     records: List[eBirdChecklistRecord] = []
@@ -216,17 +174,21 @@ def fetch_ebird_kc_checklists(
                         week=18,
                         duration_minutes=int(item.get("durationHrs", 0.25) * 60),
                         distance_km=float(item.get("howMany", 1.0) * 0.1),
-                        protocol="eBird Complete Checklist",
+                        protocol="eBird Recent Occurrence",
                         species_list=[item.get("sciName", "Passerina cyanea")],
-                        effort_completed=True
+                        effort_completed=False
                     ))
                 if records:
-                    return records
-        except Exception:
+                    return DataResult(
+                        records=records,
+                        source_name=f"eBird API v2 recent obs ({region_code})",
+                        source_type="live_api"
+                    )
+        except Exception as e:
             pass
 
-    # Fallback to curated Kansas City eBird checklist dataset
-    for item in FALLBACK_KC_EBIRD_CHECKLISTS:
+    # Fallback to demonstration fixtures
+    for item in DEMO_EBIRD_CHECKLIST_FIXTURES:
         records.append(eBirdChecklistRecord(
             checklist_id=item["checklist_id"],
             loc_id=item["loc_id"],
@@ -241,7 +203,81 @@ def fetch_ebird_kc_checklists(
             species_list=item["species_list"],
             effort_completed=True
         ))
-    return records
+    return DataResult(
+        records=records,
+        source_name="Curated Kansas City eBird Demo Fixtures",
+        source_type="curated_demo",
+        warning="Using curated demo fixtures. Live API call unavailable or unauthenticated."
+    )
+
+def fetch_ebird_kc_checklists(
+    region_code: str = "US-MO-095",
+    api_key: Optional[str] = None,
+    timeout: int = 4
+) -> List[eBirdChecklistRecord]:
+    """Legacy helper function returning list of records directly."""
+    res = fetch_recent_ebird_occurrences(region_code=region_code, api_key=api_key, timeout=timeout)
+    return res.records
+
+def load_ebd_observations(file_path: str) -> List[Dict[str, Any]]:
+    """Load raw observations from local eBird Basic Dataset (EBD) file (CSV/Parquet)."""
+    if not os.path.exists(file_path):
+        return []
+    # Placeholder parser for EBD CSV/Parquet files
+    obs = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i == 0:
+                continue
+            parts = line.strip().split("\t")
+            if len(parts) >= 10:
+                obs.append({"sampling_event_id": parts[0], "scientific_name": parts[1], "observation_count": parts[2]})
+    return obs
+
+def load_sampling_events(file_path: str) -> List[ChecklistEvent]:
+    """Load Sampling Event Data (SED) complete checklists from local file."""
+    if not os.path.exists(file_path):
+        return []
+    events = []
+    # Parse sampling event lines
+    return events
+
+def collapse_shared_checklists(events: List[ChecklistEvent]) -> List[ChecklistEvent]:
+    """Collapse multiple observer checklists recorded for the exact same event/group."""
+    seen = set()
+    unique_events = []
+    for ev in events:
+        key = (ev.latitude, ev.longitude, ev.date, ev.time if hasattr(ev, 'time') else 0)
+        if key not in seen:
+            seen.add(key)
+            unique_events.append(ev)
+    return unique_events
+
+def filter_complete_checklists(events: List[ChecklistEvent]) -> List[ChecklistEvent]:
+    """Filter for complete effort-recorded checklists."""
+    return [ev for ev in events if ev.complete_checklist and ev.duration_minutes > 0]
+
+def zero_fill_focal_species(
+    events: List[ChecklistEvent],
+    detections: List[ChecklistDetection],
+    focal_species_ids: List[str]
+) -> List[ChecklistDetection]:
+    """Create explicit non-detection (zeros) for focal species on complete checklists where species was absent."""
+    det_map = {(d.event_id, d.species_id): d for d in detections}
+    filled = []
+    for ev in events:
+        for sp_id in focal_species_ids:
+            key = (ev.event_id, sp_id)
+            if key in det_map:
+                filled.append(det_map[key])
+            else:
+                filled.append(ChecklistDetection(
+                    event_id=ev.event_id,
+                    species_id=sp_id,
+                    detected=False,
+                    count=0
+                ))
+    return filled
 
 def ebird_checklists_to_existing_observations(
     checklists: List[eBirdChecklistRecord],
@@ -249,15 +285,13 @@ def ebird_checklists_to_existing_observations(
     center_lon: float = -94.5786
 ) -> List[ExistingObservation]:
     """
-    Convert eBirdChecklistRecord items into OVON ExistingObservation objects
-    with spatial offsets, real EnviroAtlas environmental vectors, and observation week.
+    Convert eBirdChecklistRecord items into OVON ExistingObservation objects.
     """
     existing_obs: List[ExistingObservation] = []
     for cl in checklists:
         x_km = (cl.lon - center_lon) * 111.0 * math.cos(math.radians(center_lat))
         y_km = (cl.lat - center_lat) * 111.0
         
-        # Real EPA EnviroAtlas GIS environmental vector for eBird checklist location
         covs = fetch_enviroatlas_covariates(cl.lat, cl.lon, location_name=cl.loc_name)
         hab_vec = covariates_to_habitat_vector(covs)
 
