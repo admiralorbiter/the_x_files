@@ -177,6 +177,14 @@ def build_kc_urban_pedestrian_dataset(
         for o in gbif_obs
     ]
 
+    try:
+        from ovon.data.ebird import fetch_ebird_kc_checklists, ebird_checklists_to_existing_observations
+        ebird_cls = fetch_ebird_kc_checklists(region_code="US-MO-095")
+        ebird_obs = ebird_checklists_to_existing_observations(ebird_cls, center_lat=center_lat, center_lon=center_lon)
+        existing_obs.extend(ebird_obs)
+    except Exception:
+        pass
+
     return SyntheticDataset(
         candidate_sites=candidate_sites,
         travel_time_matrix=travel_time_matrix,

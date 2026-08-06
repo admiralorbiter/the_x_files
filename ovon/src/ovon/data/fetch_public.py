@@ -158,6 +158,14 @@ def build_kc_real_dataset(
     """
     rng = np.random.default_rng(seed)
     parks = fetch_kc_parks_overpass(center_lat, center_lon)
+    try:
+        from ovon.data.conservation_lands import fetch_conservation_lands
+        c_lands = fetch_conservation_lands(center_lat, center_lon)
+        for cl in c_lands:
+            parks.append({"name": f"{cl.name} ({cl.agency})", "lat": cl.lat, "lon": cl.lon})
+    except Exception:
+        pass
+
     gbif_obs = fetch_gbif_kc_birds(center_lat, center_lon)
 
     species_list = sorted(list(set([o["species"] for o in gbif_obs if o.get("species")])))
@@ -226,6 +234,22 @@ def build_kc_real_dataset(
         )
         for o in gbif_obs
     ]
+
+    try:
+        from ovon.data.ebird import fetch_ebird_kc_checklists, ebird_checklists_to_existing_observations
+        ebird_cls = fetch_ebird_kc_checklists(region_code="US-MO-095")
+        ebird_obs = ebird_checklists_to_existing_observations(ebird_cls, center_lat=center_lat, center_lon=center_lon)
+        existing_obs.extend(ebird_obs)
+    except Exception:
+        pass
+
+    try:
+        from ovon.data.inaturalist import fetch_inaturalist_kc_observations, inaturalist_records_to_existing_observations
+        inat_recs = fetch_inaturalist_kc_observations(center_lat=center_lat, center_lon=center_lon)
+        inat_obs = inaturalist_records_to_existing_observations(inat_recs, center_lat=center_lat, center_lon=center_lon)
+        existing_obs.extend(inat_obs)
+    except Exception:
+        pass
 
     return SyntheticDataset(
         candidate_sites=candidate_sites,

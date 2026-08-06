@@ -58,6 +58,8 @@ st.sidebar.header("🗺️ Map Layers & Visual Filters")
 st.sidebar.caption("Hot-switch map overlays without recalculating route optimization.")
 
 show_gbif_layer = st.sidebar.checkbox("Overlay GBIF Species Sightings on Map", value=True)
+show_ebird_layer = st.sidebar.checkbox("Overlay eBird Complete Checklists on Map", value=True)
+show_inat_layer = st.sidebar.checkbox("Overlay iNaturalist Research-Grade Sightings on Map", value=True)
 selected_species_filter = st.sidebar.selectbox("Filter Map by Species", options=["All Species"] + all_gbif_species)
 heatmap_layer = st.sidebar.radio("Grid Overlay Layer", options=["None", "Epistemic Disagreement (QBC)", "Predicted Encounter Rate (π)"])
 observer_profile = st.sidebar.selectbox("Observer Protocol Guidance", options=["Beginner", "Intermediate", "Advanced"], index=0)
@@ -67,7 +69,7 @@ st.sidebar.header("⚙️ Route Optimization Engine")
 st.sidebar.caption("Recalculate route itinerary, time budget, and OSRM network paths.")
 
 # Cached Dataset Getter to prevent expensive network fetches on UI reruns
-CACHE_VERSION = "v3_enviroatlas"
+CACHE_VERSION = "v5_inaturalist_usgs_nwi"
 
 @st.cache_data
 def get_cached_dataset(mode_name: str, cache_version: str = CACHE_VERSION):
@@ -232,6 +234,61 @@ with tab_map:
                 fill_opacity=0.6,
                 popup=folium.Popup(popup_html, max_width=250)
             ).add_to(m)
+
+    # Plot eBird complete checklist observation locations in teal blue if enabled
+    if show_ebird_layer:
+        try:
+            from ovon.data.ebird import fetch_ebird_kc_checklists
+            ebird_cls_map = fetch_ebird_kc_checklists()
+            for cl in ebird_cls_map:
+                popup_html = f"""
+                <div style="font-family: sans-serif; font-size: 13px;">
+                    <b style="color: #2b8cbe; font-size: 14px;">🦅 eBird Checklist {cl.checklist_id}</b><br>
+                    <b>Location:</b> {cl.loc_name}<br>
+                    <b>Protocol:</b> {cl.protocol}<br>
+                    <b>Duration:</b> {cl.duration_minutes} min | <b>Distance:</b> {cl.distance_km} km<br>
+                    <b>Date:</b> {cl.observation_date} (Week {cl.week})<br>
+                    <span style="color: #666;">Species Detected: {len(cl.species_list)} species</span>
+                </div>
+                """
+                folium.CircleMarker(
+                    location=[cl.lat, cl.lon],
+                    radius=6,
+                    color="#006d2c",
+                    fill=True,
+                    fill_color="#2ca25f",
+                    fill_opacity=0.9,
+                    popup=folium.Popup(popup_html, max_width=260)
+                ).add_to(m)
+        except Exception:
+            pass
+
+    # Plot iNaturalist research-grade observation locations in purple if enabled
+    if show_inat_layer:
+        try:
+            from ovon.data.inaturalist import fetch_inaturalist_kc_observations
+            inat_recs_map = fetch_inaturalist_kc_observations()
+            for r in inat_recs_map:
+                popup_html = f"""
+                <div style="font-family: sans-serif; font-size: 13px;">
+                    <b style="color: #756bb1; font-size: 14px;">🌿 iNaturalist Obs #{r.id}</b><br>
+                    <b>Species:</b> {r.common_name} (<i>{r.species_name}</i>)<br>
+                    <b>Quality:</b> <span style="color: green; font-weight: bold;">{r.quality_grade}</span><br>
+                    <b>Observer:</b> @{r.user_login}<br>
+                    <b>Date:</b> {r.observed_on} (Week {r.week})
+                </div>
+                """
+                folium.CircleMarker(
+                    location=[r.lat, r.lon],
+                    radius=5,
+                    color="#54278f",
+                    fill=True,
+                    fill_color="#756bb1",
+                    fill_opacity=0.9,
+                    popup=folium.Popup(popup_html, max_width=260)
+                ).add_to(m)
+        except Exception:
+            pass
 
     # Plot candidate sites in blue
     for s in dataset.candidate_sites:
@@ -415,6 +472,49 @@ with tab_species:
 
     st.subheader("📋 Raw GBIF Sighting Data Table")
     st.dataframe(gbif_df, use_container_width=True)
+
+    st.subheader("🦅 eBird Complete Checklist Ingestion (Effort-Corrected Observations)")
+    from ovon.data.ebird import fetch_ebird_kc_checklists
+    ebird_cls = fetch_ebird_kc_checklists()
+    ebird_df = pd.DataFrame([{
+        "Checklist ID": c.checklist_id,
+        "Location Name": c.loc_name,
+        "Protocol": c.protocol,
+        "Observation Date": c.observation_date,
+        "Week #": c.week,
+        "Duration (min)": c.duration_minutes,
+        "Distance (km)": c.distance_km,
+        "Species Detected": len(c.species_list)
+    } for c in ebird_cls])
+    st.dataframe(ebird_df, use_container_width=True)
+
+    st.subheader("🌿 iNaturalist Open API (Research-Grade Photo Confirmed Observations)")
+    from ovon.data.inaturalist import fetch_inaturalist_kc_observations
+    inat_recs = fetch_inaturalist_kc_observations()
+    inat_df = pd.DataFrame([{
+        "Record ID": r.id,
+        "Common Name": r.common_name,
+        "Scientific Name": r.species_name,
+        "Quality Grade": r.quality_grade,
+        "Observer": r.user_login,
+        "Date": r.observed_on,
+        "Week #": r.week,
+        "Coordinates": f"{r.lat:.4f}, {r.lon:.4f}"
+    } for r in inat_recs])
+    st.dataframe(inat_df, use_container_width=True)
+
+    st.subheader("🏞️ USGS PAD-US & State Conservation Lands (MDC / KDWP / USFWS)")
+    from ovon.data.conservation_lands import fetch_conservation_lands
+    c_lands = fetch_conservation_lands()
+    c_df = pd.DataFrame([{
+        "Land ID": cl.land_id,
+        "Land Name": cl.name,
+        "Managing Agency": cl.agency,
+        "Land Type": cl.land_type,
+        "Area (Acres)": f"{cl.area_acres:,.1f}",
+        "Coordinates": f"{cl.lat:.4f}, {cl.lon:.4f}"
+    } for cl in c_lands])
+    st.dataframe(c_df, use_container_width=True)
 
 # --- TAB 3: REDUNDANCY ATLAS & SPATIAL GRID ---
 with tab_atlas:
