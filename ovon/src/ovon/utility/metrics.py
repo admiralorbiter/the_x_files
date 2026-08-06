@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Dict
 from ovon.synthetic.generator import CandidateSite
 
 # List of known seasonal migratory bird keywords vs year-round residents
@@ -152,10 +152,12 @@ def compute_set_utility(
     lambda_redundancy: float = 0.5,
     species_names: Optional[List[str]] = None,
     survey_week: int = 18,
-    length_spatial: float = 10.0
+    length_spatial: float = 10.0,
+    opportunity_surface: Optional[Dict[int, float]] = None
 ) -> float:
     """
     Compute heuristic normalized multi-species information set utility U(A).
+    Supports weighting by species opportunity surface scores if provided.
     """
     if not sites:
         return 0.0
@@ -174,6 +176,10 @@ def compute_set_utility(
             qbc = getattr(s, "true_p", np.full(len(weights), 0.3))
         min_len = min(len(weights), len(qbc))
         w_qbc = np.sum(np.array(weights)[:min_len] * np.array(qbc)[:min_len])
+
+        if opportunity_surface is not None and s.site_id in opportunity_surface:
+            w_qbc = w_qbc * opportunity_surface[s.site_id]
+
         weighted_qbc.append(w_qbc)
 
     total_info = 0.0

@@ -96,11 +96,12 @@ def build_greedy_route(
     survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0,
-    fixed_duration_minutes: Optional[float] = None
+    fixed_duration_minutes: Optional[float] = None,
+    opportunity_surface: Optional[Dict[int, float]] = None
 ) -> RouteSolution:
     """
     Construct a route greedily based on marginal utility gain per minute added.
-    Supports fixed observation duration (e.g. fixed 10 min) for baseline comparisons.
+    Supports fixed observation duration and opportunity surface weighting.
     Preserves dataset object immutability by creating isolated site copies.
     """
     valid_sites = filter_valid_candidates(dataset)
@@ -125,7 +126,8 @@ def build_greedy_route(
         dataset.existing_observations,
         species_names=species_names,
         lambda_redundancy=lambda_redundancy,
-        survey_week=survey_week
+        survey_week=survey_week,
+        opportunity_surface=opportunity_surface
     )
 
     while True:

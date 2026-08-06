@@ -50,6 +50,33 @@ def run_experiment(train_year: int, replay_year: int, budget: float, week: int):
 
     click.echo("\n[OK] Historical Replay Benchmark completed successfully!")
 
+@cli.command(name="search-lab")
+@click.option("--species", default="Passerina cyanea", help="Target focal species.")
+@click.option("--mode", default="expected_undocumented", help="Opportunity search mode.")
+@click.option("--week", default=18, help="Target survey week (1-52).")
+@click.option("--profile", default="Intermediate", help="Observer skill profile.")
+def search_lab(species: str, mode: str, week: int, profile: str):
+    """Run Species Search Opportunity Engine and generate ranked location cards."""
+    from ovon.models.opportunity import calculate_opportunity_surface, SEARCH_MODES
+    from ovon.data.fetch_public import build_kc_real_dataset
+
+    click.echo("=== OVON Species Search Opportunity Engine ===")
+    click.echo(f"Target Species: {species}")
+    click.echo(f"Search Objective Mode: {SEARCH_MODES.get(mode, mode)}")
+    click.echo(f"Survey Week: {week} | Observer Profile: {profile}\n")
+
+    dataset = build_kc_real_dataset()
+    opportunity_cells = calculate_opportunity_surface(
+        dataset, species_id=species, survey_week=week, mode=mode, observer_profile=profile
+    )
+
+    click.echo("Top 5 Ranked Candidate Location Opportunity Cards:")
+    for rank, cell in enumerate(opportunity_cells[:5], 1):
+        click.echo(f"{rank}. {cell.site_name} (Site #{cell.site_id})")
+        click.echo(f"   Opportunity Score: {cell.opportunity_score:.4f} | Habitat Match: {cell.habitat_similarity*100:.0f}%")
+        click.echo(f"   Expected Encounter: {cell.expected_encounter*100:.1f}% | Prior Checklist Coverage: {cell.checklist_effort:.2f}")
+        click.echo(f"   Explanation: {cell.explanation}\n")
+
 @cli.command(name="fetch-data")
 @click.option("--region", default="US-MO-095", help="eBird region code for fetch.")
 def fetch_data(region: str):

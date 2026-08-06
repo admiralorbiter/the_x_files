@@ -25,6 +25,8 @@ from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
 from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
+from ovon.models.opportunity import calculate_opportunity_surface, SEARCH_MODES
+from ovon.features.habitat_analog import calculate_expected_richness_debt
 from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
@@ -60,7 +62,7 @@ observer_profile = st.sidebar.selectbox("Observer Protocol Guidance", options=["
 st.sidebar.divider()
 st.sidebar.header("⚙️ Route Optimization Engine")
 
-CACHE_VERSION = "v7_phenology_graph_restored"
+CACHE_VERSION = "v8_species_search_lab"
 
 @st.cache_data
 def get_cached_dataset(mode_name: str, cache_version: str = CACHE_VERSION):
@@ -133,8 +135,9 @@ def get_osrm_details(coords, is_urban, cache_version: str = CACHE_VERSION):
 osrm_res = get_osrm_details(closed_loop_coords, is_urban_pedestrian, CACHE_VERSION)
 
 # Tabs Layout
-tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
+tab_map, tab_opportunity, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
     "🗺️ Route Map & OSRM Path Layer",
+    "🎯 Species Search Lab",
     "🦅 Dynamic Phenology & Species Analytics",
     "📊 Redundancy Atlas & Spatial Grid",
     "🤖 Model Calibration & Out-of-Fold CV",
@@ -277,7 +280,55 @@ with tab_map:
         })
     st.table(pd.DataFrame(itinerary_data))
 
-# --- TAB 2: DYNAMIC PHENOLOGY & SPECIES ANALYTICS ---
+# --- TAB 2: SPECIES SEARCH LAB ---
+with tab_opportunity:
+    st.subheader("🎯 Species Search Opportunity Engine")
+    st.caption("Identifies locations where ecological evidence indicates a target species should be present, but where volunteer survey coverage remains sparse.")
+
+    search_sp = st.selectbox("Select Target Focal Species", options=dataset.species_names, index=0)
+    search_mode_key = st.selectbox(
+        "Select Search Opportunity Objective Mode",
+        options=list(SEARCH_MODES.keys()),
+        format_func=lambda k: SEARCH_MODES[k],
+        index=1
+    )
+
+    opp_cells = calculate_opportunity_surface(
+        dataset, species_id=search_sp, survey_week=survey_week_val, mode=search_mode_key, observer_profile=observer_profile
+    )
+
+    st.markdown(f"### 📍 Top Ranked Location Opportunity Cards ({len(opp_cells)} sites evaluated)")
+    
+    card_cols = st.columns(3)
+    for i, cell in enumerate(opp_cells[:6]):
+        col_idx = i % 3
+        with card_cols[col_idx]:
+            st.markdown(f"#### #{i+1} {cell.site_name}")
+            st.metric("Opportunity Score", f"{cell.opportunity_score:.4f}", f"Habitat Match: {cell.habitat_similarity*100:.0f}%")
+            st.caption(f"📍 **Expected Encounter**: {cell.expected_encounter*100:.1f}% | **Coverage**: {cell.checklist_effort:.2f}")
+            st.info(f"💡 **Explanation**: {cell.explanation}")
+
+    st.divider()
+    st.subheader("🌿 Expected Species Richness Debt Analysis")
+    st.caption("Compares expected habitat species richness against effort-adjusted observed richness to identify under-sampled greenways.")
+    debt_results = calculate_expected_richness_debt(dataset.candidate_sites, gbif_records)
+    st.table(pd.DataFrame(debt_results)[["site_name", "expected_richness", "observed_richness", "richness_debt", "explanation"]])
+
+    st.divider()
+    st.markdown("### 🗺️ Route Optimization Integration")
+    if st.button("🚀 Optimize Volunteer Route for This Search Objective", use_container_width=True):
+        opp_surface_dict = {c.site_id: c.opportunity_score for c in opp_cells}
+        spec_sol = build_greedy_route(
+            dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min),
+            lambda_redundancy=lambda_red, survey_week=survey_week_val,
+            opportunity_surface=opp_surface_dict, return_to_hub=True
+        )
+        st.success(f"✓ Generated Species-Specific Route for '{search_sp}' ({SEARCH_MODES[search_mode_key]})!")
+        st.metric("Route Circuit Time", f"{spec_sol.total_time_minutes:.1f} min", f"Stops: {len(spec_sol.sites)}")
+        st.metric("Opportunity Search Score Utility", f"{spec_sol.utility:.4f}")
+        st.caption("Sites visited: " + " → ".join([getattr(s, "park_name", f"Site {s.site_id}") for s in spec_sol.sites]))
+
+# --- TAB 3: DYNAMIC PHENOLOGY & SPECIES ANALYTICS ---
 with tab_species:
     st.subheader("🦅 Focal Species Portfolio & Dynamic Weekly Species Weights")
     
@@ -336,7 +387,7 @@ with tab_species:
         }).set_index("Annual Week (1-52)")
         st.line_chart(phen_df, color="#02818a")
 
-# --- TAB 3: REDUNDANCY ATLAS & SPATIAL GRID ---
+# --- TAB 4: REDUNDANCY ATLAS & SPATIAL GRID ---
 with tab_atlas:
     st.subheader("📊 Kansas City Equal-Area 3 km Spatial Grid")
     grid = EqualAreaGrid()
@@ -345,7 +396,7 @@ with tab_atlas:
     c1.metric("Total Grid Cells", f"{grid.total_cells}")
     c2.metric("Cell Resolution", f"{grid.resolution_km} km x {grid.resolution_km} km", "~9.0 km² per cell")
 
-# --- TAB 4: MODEL CALIBRATION & OUT-OF-FOLD CV ---
+# --- TAB 5: MODEL CALIBRATION & OUT-OF-FOLD CV ---
 with tab_models:
     st.subheader("🤖 Species Encounter Model Calibration & Out-of-Fold Spatial CV")
     st.caption("Status: Synthetic Demonstration (Real empirical model requires EBD dataset fitting)")
@@ -356,7 +407,7 @@ with tab_models:
     ]
     st.table(pd.DataFrame(cv_results))
 
-# --- TAB 5: POLICY BENCHMARK COMPARISON ---
+# --- TAB 6: POLICY BENCHMARK COMPARISON ---
 with tab_benchmark:
     st.subheader("⚔️ Policy Comparison: OVON vs. Raw Hotspot vs. Random")
 
