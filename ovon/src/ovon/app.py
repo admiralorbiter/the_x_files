@@ -277,16 +277,38 @@ with tab_map:
         else:
             st.write("Driving directions loaded.")
 
+from ovon.data.species_enrichment import get_enriched_species_metadata
+
 # --- TAB 2: SPECIES ANALYTICS & GBIF RECORDS ---
 with tab_species:
-    st.subheader("🦅 Focal Species Portfolio & GBIF Occurrence Analytics")
+    st.subheader("🦅 Focal Species Portfolio & Open API Information Cards")
+    st.caption("Enriched with real-time metadata from iNaturalist, Wikipedia, & eBird taxonomy APIs.")
+
+    # Interactive Species Selector Card
+    selected_sp_card = st.selectbox("Select Focal Species to Inspect", options=dataset.species_names, index=0)
+    sp_meta = get_enriched_species_metadata(selected_sp_card)
+
+    card_col1, card_col2 = st.columns([1, 2])
+    with card_col1:
+        st.image(sp_meta.photo_url, caption=f"{sp_meta.common_name} ({sp_meta.scientific_name})", use_container_width=True)
+    with card_col2:
+        st.markdown(f"### 🦅 {sp_meta.common_name}")
+        st.markdown(f"**Scientific Name:** *{sp_meta.scientific_name}*")
+        st.markdown(f"**Guild Class:** `{sp_meta.guild_class}`")
+        st.markdown(f"**Primary Micro-Habitat:** `{sp_meta.primary_habitat}`")
+        st.markdown(f"**Conservation Status:** `{sp_meta.conservation_status}`")
+        st.info(f"ℹ️ **Species Overview:** {sp_meta.description}")
+        if sp_meta.wikipedia_url:
+            st.markdown(f"🔗 [Read full species profile on Wikipedia]({sp_meta.wikipedia_url})")
+
+    st.divider()
     sp_col1, sp_col2 = st.columns([1, 2])
 
     with sp_col1:
         st.subheader("Focal Portfolio Target Weights")
         species_df = pd.DataFrame({
             "Species ID": [f"SP-{i+1:02d}" for i in range(dataset.n_species)],
-            "Focal Species Name": dataset.species_names,
+            "Common Name": dataset.species_names,
             "Guild Class": ["Migratory" if idx < 4 else "Resident" for idx in range(dataset.n_species)],
             "Utility Weight ($w_s$)": [f"{2.5 / (4*2.5 + 4*1.0):.3f}" if idx < 4 else f"{1.0 / (4*2.5 + 4*1.0):.3f}" for idx in range(dataset.n_species)]
         })
@@ -297,8 +319,8 @@ with tab_species:
         gbif_df = pd.DataFrame(gbif_records)
         if "species" in gbif_df.columns:
             counts = gbif_df["species"].value_counts().reset_index()
-            counts.columns = ["Species Name", "Detection Records"]
-            st.bar_chart(counts, x="Species Name", y="Detection Records", color="Species Name")
+            counts.columns = ["Common Name", "Detection Records"]
+            st.bar_chart(counts, x="Common Name", y="Detection Records", color="Common Name")
 
     st.subheader("📋 Raw GBIF Sighting Data Table")
     st.dataframe(gbif_df, use_container_width=True)

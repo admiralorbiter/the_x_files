@@ -7,6 +7,7 @@ import numpy as np
 import requests
 
 from ovon.synthetic.generator import CandidateSite, ExistingObservation, SyntheticDataset
+from ovon.data.species_enrichment import resolve_common_name
 
 @dataclass
 class DataFetchResult:
@@ -124,7 +125,8 @@ def fetch_gbif_kc_birds(
             results = data.get("results", [])
             records = []
             for r in results:
-                species = r.get("vernacularName") or r.get("species")
+                raw_sp = r.get("vernacularName") or r.get("species")
+                species = resolve_common_name(raw_sp) if raw_sp else None
                 lat = r.get("decimalLatitude")
                 lon = r.get("decimalLongitude")
                 if species and lat and lon:
