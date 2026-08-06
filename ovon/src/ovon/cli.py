@@ -12,6 +12,7 @@ from ovon.data.inaturalist import fetch_inaturalist_kc_occurrences
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
 from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
+from ovon.models.pipeline import run_historical_replay_experiment
 from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
@@ -24,6 +25,31 @@ def cli():
     """Optimal Volunteer Observation Network (OVON) CLI"""
     pass
 
+@cli.command(name="run-experiment")
+@click.option("--train-year", default=2022, help="Prior year for training encounter model.")
+@click.option("--replay-year", default=2023, help="Target year for historical replay.")
+@click.option("--budget", default=90.0, help="Time budget in minutes.")
+@click.option("--week", default=18, help="Target survey week.")
+def run_experiment(train_year: int, replay_year: int, budget: float, week: int):
+    """Run Sprint 3 Rolling Historical Replay Experiment across 5 sampling policies."""
+    click.echo(f"=== OVON Sprint 3: Rolling Historical Replay Experiment ===")
+    click.echo(f"Train Period: Year {train_year} | Replay Period: Year {replay_year} | Target Week: Week {week}")
+    click.echo(f"Time Budget: {budget:.0f} minutes")
+    
+    res = run_historical_replay_experiment(
+        train_year=train_year, replay_year=replay_year, budget_minutes=budget, survey_week=week
+    )
+
+    click.echo(f"\nFocal Species: {res.focal_species[0]}")
+    click.echo("\nPolicy Benchmark Comparison Table:")
+    click.echo(f"{'Policy Name':<35} | {'Stops':<5} | {'Time (m)':<8} | {'Init Brier':<10} | {'Post Brier':<10} | {'Brier Red.':<10} | {'Gain/Min':<10}")
+    click.echo("-" * 105)
+
+    for p in res.policy_results:
+        click.echo(f"{p.policy_name:<35} | {p.n_stops:<5} | {p.total_time_minutes:<8.1f} | {p.initial_brier_score:<10.4f} | {p.post_observation_brier_score:<10.4f} | {p.brier_score_reduction:<10.4f} | {p.info_gain_per_minute:<10.5f}")
+
+    click.echo("\n[OK] Historical Replay Benchmark completed successfully!")
+
 @cli.command(name="fetch-data")
 @click.option("--region", default="US-MO-095", help="eBird region code for fetch.")
 def fetch_data(region: str):
@@ -32,23 +58,23 @@ def fetch_data(region: str):
     
     click.echo("1. Fetching OpenStreetMap Kansas City public parks & landmarks...")
     parks = fetch_kc_parks_overpass()
-    click.echo(f"   ✓ Retreived {len(parks)} spatial candidate landmarks.")
+    click.echo(f"   [OK] Retreived {len(parks)} spatial candidate landmarks.")
 
     click.echo("2. Fetching GBIF presence-only bird occurrence records...")
     birds = fetch_gbif_kc_birds()
-    click.echo(f"   ✓ Retreived {len(birds)} GBIF occurrence records.")
+    click.echo(f"   [OK] Retreived {len(birds)} GBIF occurrence records.")
 
     click.echo("3. Querying eBird recent occurrence endpoint...")
     ebird_res = fetch_recent_ebird_occurrences(region_code=region)
-    click.echo(f"   ✓ Source: {ebird_res.source_name} ({ebird_res.source_type})")
-    click.echo(f"   ✓ Retreived {len(ebird_res.records)} recent eBird sightings.")
+    click.echo(f"   [OK] Source: {ebird_res.source_name} ({ebird_res.source_type})")
+    click.echo(f"   [OK] Retreived {len(ebird_res.records)} recent eBird sightings.")
 
     click.echo("4. Querying iNaturalist research-grade occurrences...")
     inat_res = fetch_inaturalist_kc_occurrences()
-    click.echo(f"   ✓ Source: {inat_res.source_name} ({inat_res.source_type})")
-    click.echo(f"   ✓ Retreived {len(inat_res.records)} iNaturalist observations.")
+    click.echo(f"   [OK] Source: {inat_res.source_name} ({inat_res.source_type})")
+    click.echo(f"   [OK] Retreived {len(inat_res.records)} iNaturalist observations.")
 
-    click.echo("\n✓ Dataset rebuild completed successfully!")
+    click.echo("\n[OK] Dataset rebuild completed successfully!")
 
 @cli.command(name="model-evaluate")
 @click.option("--n-samples", default=100, help="Number of training samples.")
