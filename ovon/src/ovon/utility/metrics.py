@@ -75,10 +75,12 @@ def calculate_site_redundancy_to_history(
 
     total_coverage = 0.0
     for obs in existing_observations:
-        if hasattr(obs, "x_km"):
-            obs_x, obs_y, obs_hab = obs.x_km, obs.y_km, obs.habitat
-        else:
+        if isinstance(obs, (tuple, list)):
             obs_x, obs_y, obs_hab = obs[0], obs[1], obs[2]
+        else:
+            obs_x = getattr(obs, "x_km", getattr(obs, "x", 0.0))
+            obs_y = getattr(obs, "y_km", getattr(obs, "y", 0.0))
+            obs_hab = getattr(obs, "habitat", np.array([0.33, 0.33, 0.34]))
 
         k = spatial_habitat_kernel(
             site.x, site.y, site.habitat,

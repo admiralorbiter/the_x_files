@@ -39,13 +39,15 @@ def fallback_geodesic_route(
 
 def fetch_osrm_route(
     start_lat: float, start_lon: float, end_lat: float, end_lon: float,
+    profile: str = "driving",
     timeout: int = 5
 ) -> Dict[str, Any]:
     """
-    Fetch exact driving route from Open Source Routing Machine (OSRM) public API.
-    Returns duration, distance, road-snapped polyline coordinates, and turn-by-turn steps.
+    Fetch exact route from Open Source Routing Machine (OSRM) public API for driving or walking profile.
+    Returns duration, distance, snapped polyline coordinates, and turn-by-turn steps.
     """
-    url = f"https://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
+    osrm_profile = "walking" if profile in ["walking", "foot"] else "driving"
+    url = f"https://router.project-osrm.org/route/v1/{osrm_profile}/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
     
     try:
         response = requests.get(url, timeout=timeout)
@@ -57,24 +59,22 @@ def fetch_osrm_route(
                 duration_min = float(route0.get("duration", 0.0)) / 60.0
                 distance_km = float(route0.get("distance", 0.0)) / 1000.0
                 
-                # GeoJSON coordinates format: [[lon, lat], ...] -> convert to [[lat, lon], ...] for Folium
                 raw_coords = route0.get("geometry", {}).get("coordinates", [])
                 polyline_coords = [[pt[1], pt[0]] for pt in raw_coords]
 
-                # Extract turn-by-turn step instructions
                 steps_list = []
                 legs = route0.get("legs", [])
                 for leg in legs:
                     for step in leg.get("steps", []):
-                        name = step.get("name", "road")
-                        maneuver = step.get("maneuver", {}).get("type", "drive")
+                        name = step.get("name", "trail/path")
+                        maneuver = step.get("maneuver", {}).get("type", "walk" if osrm_profile == "walking" else "drive")
                         step_dist_mi = (step.get("distance", 0.0) / 1000.0) * 0.621371
-                        if step_dist_mi > 0.05:
-                            instruction = f"{maneuver.title()} on {name if name else 'connecting road'} ({step_dist_mi:.1f} mi)"
+                        if step_dist_mi > 0.02:
+                            instruction = f"{maneuver.title()} on {name if name else 'connecting path'} ({step_dist_mi:.2f} mi)"
                             steps_list.append(instruction)
 
                 if not steps_list:
-                    steps_list = [f"Drive {distance_km:.1f} km along primary road network."]
+                    steps_list = [f"Walk {distance_km:.1f} km along pedestrian path network." if osrm_profile == "walking" else f"Drive {distance_km:.1f} km along primary road network."]
 
                 return {
                     "duration_min": duration_min,
@@ -86,20 +86,23 @@ def fetch_osrm_route(
     except Exception:
         pass
 
-    return fallback_geodesic_route(start_lat, start_lon, end_lat, end_lon)
+    fallback_speed = 4.5 if osrm_profile == "walking" else 40.0
+    return fallback_geodesic_route(start_lat, start_lon, end_lat, end_lon, speed_kmh=fallback_speed)
 
 def fetch_osrm_multistop_route(
     coords: List[Tuple[float, float]],
+    profile: str = "driving",
     timeout: int = 6
 ) -> Dict[str, Any]:
     """
-    Fetch multi-stop driving itinerary polyline and step instructions across a sequence of stops.
+    Fetch multi-stop driving or walking itinerary polyline and step instructions across a sequence of stops.
     """
     if len(coords) < 2:
         return {"duration_min": 0.0, "distance_km": 0.0, "polyline_coords": [], "steps": [], "is_fallback": False}
 
+    osrm_profile = "walking" if profile in ["walking", "foot"] else "driving"
     coord_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
-    url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}?overview=full&geometries=geojson&steps=true"
+    url = f"https://router.project-osrm.org/route/v1/{osrm_profile}/{coord_str}?overview=full&geometries=geojson&steps=true"
 
     try:
         response = requests.get(url, timeout=timeout)

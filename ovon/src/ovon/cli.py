@@ -100,6 +100,45 @@ def fetch_kc():
     unique_species = list(set([b['species'] for b in birds if b.get('species')]))
     click.echo(f"Sample Species Portfolio ({len(unique_species)} species): {', '.join(unique_species[:6])}")
 
+from ovon.data.fetch_urban import build_kc_urban_pedestrian_dataset, fetch_kc_urban_pois_overpass
+
+@cli.command(name="fetch-urban")
+def fetch_urban():
+    """Download and report Kansas City urban pedestrian greenways, transit hubs, and fountains."""
+    click.echo("Fetching Kansas City urban pedestrian POIs, transit hubs, and fountains...")
+    res = fetch_kc_urban_pois_overpass()
+    click.echo(f"Source: {res.source}")
+    click.echo(f"Retrieved {len(res.records)} urban pedestrian landmarks.")
+    for p in res.records[:5]:
+        click.echo(f"  - {p['name']} ({p['type']}) | Transit: {p.get('transit_connection', 'Pedestrian')}")
+
+@cli.command(name="optimize-walk")
+@click.option("--budget", default=75.0, help="Total route budget in minutes.")
+@click.option("--start-site", default=0, help="Start site ID.")
+def optimize_walk(budget: float, start_site: int):
+    """Run OVON pedestrian route optimizer on urban Kansas City circuit."""
+    dataset = build_kc_urban_pedestrian_dataset()
+    click.echo("Loaded Kansas City urban pedestrian greenways, transit hubs, & 4.5 km/h walking matrix.")
+    
+    greedy_sol = build_greedy_route(dataset, start_site_id=start_site, budget_minutes=budget, return_to_hub=True)
+    ovon_sol = refine_route_local_search(greedy_sol, dataset, return_to_hub=True)
+
+    click.echo("\n=== OVON Pedestrian Walking Circuit Optimization Result ===")
+    click.echo(f"Budget: {budget:.1f} minutes")
+    click.echo(f"Total Walking Stops: {len(ovon_sol.sites)}")
+    click.echo(f"Walking Travel Time: {ovon_sol.total_travel_minutes:.1f} min")
+    click.echo(f"Stationary Survey Time: {ovon_sol.total_observation_minutes:.1f} min")
+    click.echo(f"Total Circuit Time: {ovon_sol.total_time_minutes:.1f} min")
+    click.echo(f"Multi-Species Information Utility: {ovon_sol.utility:.4f}")
+
+    click.echo("\nRecommended Urban Walking Itinerary:")
+    for idx, site in enumerate(ovon_sol.sites):
+        park_name = getattr(site, "park_name", f"Site {site.site_id}")
+        lat = getattr(site, "lat", 0.0)
+        lon = getattr(site, "lon", 0.0)
+        transit = getattr(site, "transit_connection", "Pedestrian Access")
+        click.echo(f"  Stop {idx+1}: {park_name} ({transit}) - {site.observation_minutes} min micro-survey")
+
 @cli.command(name="grid-build")
 @click.option("--radius", default=50.0, help="Pilot region radius in km.")
 @click.option("--res", default=3.0, help="Grid resolution in km.")
@@ -124,14 +163,29 @@ def report_redundancy(week: int, top_k: int):
 
     dataset = build_kc_real_dataset()
     obs_list = []
-    for obs_tuple in dataset.existing_observations:
-        obs_list.append({
-            "lat": grid.center_lat + (obs_tuple[1] / 111.0),
-            "lon": grid.center_lon + (obs_tuple[0] / (111.0 * 0.77)),
-            "week": obs_tuple[3],
-            "observer_id": "obs_sample",
-            "habitat": obs_tuple[2]
-        })
+    for obs in dataset.existing_observations:
+        if isinstance(obs, (tuple, list)):
+            obs_list.append({
+                "lat": grid.center_lat + (obs[1] / 111.0),
+                "lon": grid.center_lon + (obs[0] / (111.0 * 0.77)),
+                "week": obs[3],
+                "observer_id": "obs_sample",
+                "habitat": obs[2]
+            })
+        else:
+            obs_lat = getattr(obs, "lat", None)
+            if obs_lat is None:
+                obs_lat = grid.center_lat + (getattr(obs, "y_km", getattr(obs, "y", 0.0)) / 111.0)
+            obs_lon = getattr(obs, "lon", None)
+            if obs_lon is None:
+                obs_lon = grid.center_lon + (getattr(obs, "x_km", getattr(obs, "x", 0.0)) / (111.0 * 0.77))
+            obs_list.append({
+                "lat": obs_lat,
+                "lon": obs_lon,
+                "week": getattr(obs, "week", 18),
+                "observer_id": getattr(obs, "observer_id", "obs_sample") or "obs_sample",
+                "habitat": getattr(obs, "habitat", np.array([0.33, 0.33, 0.34]))
+            })
 
     atlas.ingest_observations(obs_list)
     top_undersampled = atlas.get_top_undersampled_cells(week=week, top_k=top_k)

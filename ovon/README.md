@@ -36,9 +36,13 @@ The best birding spot is rarely the best scientific sampling location. Highly po
   - Calibrated Random Forest models predicting standardized encounter probabilities $\hat{\pi}_{sit} \in [0, 1]$.
   - Spatial Block Cross-Validation (`SpatialBlockCV`) and Spatial Bootstrap Ensembles (`BootstrapEnsembleUncertainty`) generating epistemic model disagreement layers.
 
-- ✅ **Milestone 5: OSRM Real Road Routing & Turn-by-Turn Directions (`src/ovon/routing/osrm.py`)**
-  - Open Source Routing Machine API integration rendering **road-snapped polylines** along actual highways (I-70, I-435, US-71).
-  - Turn-by-turn volunteer driving directions and geodesic fallback routing.
+- ✅ **Milestone 5: OSRM Real Road & Walking Routing (`src/ovon/routing/osrm.py`)**
+  - Open Source Routing Machine API integration rendering **road-snapped polylines** along highways or **pedestrian trail polylines** along urban footpaths.
+  - Turn-by-turn volunteer driving directions and pedestrian walking instructions.
+
+- ✅ **Urban Pedestrian & Transit Circuit Expansion (`src/ovon/data/fetch_urban.py`)**
+  - Ingestion of urban footways, greenways (Trolley Track Trail, Brush Creek Corridor), historic cemeteries (Union Cemetery), fountains, and KC Streetcar transit hubs.
+  - Walkable 1.5–5.0 km transit-anchored closed-loop itineraries (4.5 km/h walking travel matrices with 5-minute micro-stationary counts).
 
 - ✅ **Interactive Web Research Dashboard (`src/ovon/app.py`)**
   - Streamlit + Folium map interface with form-based controls eliminating map flicker.

@@ -18,6 +18,7 @@ except ImportError:
     HAS_STREAMLIT_FOLIUM = False
 
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_gbif_kc_birds
+from ovon.data.fetch_urban import build_kc_urban_pedestrian_dataset
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
@@ -50,51 +51,67 @@ def get_cached_gbif_records():
 gbif_records = get_cached_gbif_records()
 all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if r.get("species")])))
 
-# Sidebar Configuration with Form to prevent map flicker
-st.sidebar.header("⚙️ Optimization Parameters")
+# Sidebar Configuration: Separated into Hot-Switched Visuals vs Heavy Optimization Form
+st.sidebar.header("🗺️ Map Layers & Visual Filters")
+st.sidebar.caption("Hot-switch map overlays without recalculating route optimization.")
+
+show_gbif_layer = st.sidebar.checkbox("Overlay GBIF Species Sightings on Map", value=True)
+selected_species_filter = st.sidebar.selectbox("Filter Map by Species", options=["All Species"] + all_gbif_species)
+heatmap_layer = st.sidebar.radio("Grid Overlay Layer", options=["None", "Epistemic Disagreement (QBC)", "Predicted Encounter Rate (π)"])
+observer_profile = st.sidebar.selectbox("Observer Protocol Guidance", options=["Beginner", "Intermediate", "Advanced"], index=0)
+
+st.sidebar.divider()
+st.sidebar.header("⚙️ Route Optimization Engine")
+st.sidebar.caption("Recalculate route itinerary, time budget, and OSRM network paths.")
+
+# Cached Dataset Getter to prevent expensive network fetches on UI reruns
+@st.cache_data
+def get_cached_dataset(mode_name: str):
+    if mode_name == "Kansas City Urban Pedestrian Circuit (Walk-First)":
+        return build_kc_urban_pedestrian_dataset()
+    elif mode_name == "Kansas City Regional Geographic Demo (Driving)":
+        return build_kc_real_dataset()
+    else:
+        return generate_synthetic_dataset(n_sites=40, seed=42)
 
 with st.sidebar.form(key="opt_form"):
-    data_mode = st.selectbox("Experiment Data Mode", options=["Kansas City Geographic Demo", "Synthetic Benchmark Experiment"], index=0)
-    use_real_kc = (data_mode == "Kansas City Geographic Demo")
-    observer_profile = st.selectbox("Observer Experience Level", options=["Beginner", "Intermediate", "Advanced"], index=0)
-    
-    show_gbif_layer = st.checkbox("Overlay GBIF Species Sightings on Map", value=True)
-    selected_species_filter = st.selectbox("Filter Map by Species", options=["All Species"] + all_gbif_species)
-    heatmap_layer = st.radio("Grid Overlay Layer", options=["None", "Epistemic Disagreement (QBC)", "Predicted Encounter Rate (π)"])
+    data_mode = st.selectbox(
+        "Experiment Data Mode",
+        options=[
+            "Kansas City Urban Pedestrian Circuit (Walk-First)",
+            "Kansas City Regional Geographic Demo (Driving)",
+            "Synthetic Benchmark Experiment"
+        ],
+        index=0
+    )
+    is_urban_pedestrian = (data_mode == "Kansas City Urban Pedestrian Circuit (Walk-First)")
+    use_real_kc = (data_mode == "Kansas City Regional Geographic Demo (Driving)")
 
-    budget_min = st.slider("Total Route Time Budget (minutes)", min_value=30, max_value=180, value=90, step=15)
+    # Instant cached dataset lookup (< 0.1ms)
+    preview_ds = get_cached_dataset(data_mode)
+    site_names = [getattr(s, "park_name", f"Candidate Site {s.site_id}") for s in preview_ds.candidate_sites]
+    start_site_idx = st.selectbox("Starting Location / Hub", options=range(len(site_names)), format_func=lambda i: site_names[i])
+
+    budget_min = st.slider("Total Route Time Budget (minutes)", min_value=30, max_value=180, value=75, step=15)
     lambda_red = st.slider("Redundancy Penalty Weight (λ)", min_value=0.0, max_value=2.0, value=0.5, step=0.1)
 
-    submit_button = st.form_submit_button(label="🚀 Optimize Route & Update Map", use_container_width=True)
+    submit_button = st.form_submit_button(label="🚀 Recalculate Route Solution", use_container_width=True)
 
-if use_real_kc:
-    @st.cache_data
-    def load_real_dataset():
-        return build_kc_real_dataset()
-    dataset = load_real_dataset()
-else:
-    @st.cache_data
-    def load_synthetic_dataset():
-        return generate_synthetic_dataset(n_sites=40, seed=42)
-    dataset = load_synthetic_dataset()
+dataset = preview_ds
 
-# Park Selection for Starting Node
-site_names = [getattr(s, "park_name", f"Candidate Site {s.site_id}") for s in dataset.candidate_sites]
-start_site_idx = st.sidebar.selectbox("Starting Location / Hub", options=range(len(site_names)), format_func=lambda i: site_names[i])
-
-# Run OVON Optimizer
+# Run OVON Optimizer (Using Cached Datasets)
 @st.cache_data
-def get_optimized_route(start_idx, budget, lam, is_real):
-    ds = load_real_dataset() if is_real else load_synthetic_dataset()
-    greedy_sol = build_greedy_route(ds, start_site_id=start_idx, budget_minutes=float(budget), lambda_redundancy=lam)
-    return refine_route_local_search(greedy_sol, ds, lambda_redundancy=lam)
+def get_optimized_route(start_idx, budget, lam, mode_name):
+    ds = get_cached_dataset(mode_name)
+    greedy_sol = build_greedy_route(ds, start_site_id=start_idx, budget_minutes=float(budget), lambda_redundancy=lam, return_to_hub=True)
+    return refine_route_local_search(greedy_sol, ds, lambda_redundancy=lam, return_to_hub=True)
 
-ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, use_real_kc)
+ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode)
 
-# Fetch OSRM Road Driving Polyline & Turn-by-Turn Steps
+# Fetch OSRM Polyline & Turn-by-Turn Steps
 stop_coords = []
-center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0997)
-center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5786)
+center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0854)
+center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5857)
 
 for s in ovon_sol.sites:
     lat = getattr(s, "lat", center_lat + (s.y / 111.0))
@@ -102,10 +119,11 @@ for s in ovon_sol.sites:
     stop_coords.append((lat, lon))
 
 @st.cache_data
-def get_osrm_driving_details(coords):
-    return fetch_osrm_multistop_route(coords)
+def get_osrm_details(coords, is_urban):
+    profile_type = "walking" if is_urban else "driving"
+    return fetch_osrm_multistop_route(coords, profile=profile_type)
 
-osrm_res = get_osrm_driving_details(stop_coords)
+osrm_res = get_osrm_details(stop_coords, is_urban_pedestrian)
 
 # Tabs Layout
 tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
@@ -233,7 +251,8 @@ with tab_map:
         lat = getattr(s, "lat", center_lat + (s.y / 111.0))
         lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
         
-        protocol_note = "10-min stationary complete eBird checklist"
+        transit_info = getattr(s, "transit_connection", "Pedestrian Access")
+        protocol_note = f"{s.observation_minutes}-min stationary complete eBird checklist"
         if observer_profile == "Beginner":
             protocol_note += " (Focus on high-detectability focal species; audio recording encouraged)"
         elif observer_profile == "Advanced":
@@ -242,14 +261,16 @@ with tab_map:
         itinerary_data.append({
             "Stop #": idx + 1,
             "Location Name": park_name,
+            "Transit Access": transit_info,
             "Coordinates": f"{lat:.4f}, {lon:.4f}",
             "Observer Guidance": protocol_note,
             "Survey Duration": f"{s.observation_minutes} min"
         })
     st.table(pd.DataFrame(itinerary_data))
 
-    # Turn-by-Turn Driving Directions Expander
-    with st.expander("🚗 Turn-by-Turn Volunteer Driving Directions (OSRM Road Network)", expanded=False):
+    # Turn-by-Turn Directions Expander
+    directions_title = "🚶 Turn-by-Turn Volunteer Walking Directions (OSRM Pedestrian Trail Network)" if is_urban_pedestrian else "🚗 Turn-by-Turn Volunteer Driving Directions (OSRM Road Network)"
+    with st.expander(directions_title, expanded=False):
         if osrm_res.get("steps"):
             for step_text in osrm_res["steps"]:
                 st.write(step_text)
@@ -288,16 +309,30 @@ with tab_atlas:
     grid = EqualAreaGrid()
     atlas = RedundancyAtlas(grid)
 
-    obs_list = [
-        {
-            "lat": grid.center_lat + (obs[1] / 111.0),
-            "lon": grid.center_lon + (obs[0] / (111.0 * 0.77)),
-            "week": obs[3],
-            "observer_id": "obs_sample",
-            "habitat": obs[2]
-        }
-        for obs in dataset.existing_observations
-    ]
+    obs_list = []
+    for obs in dataset.existing_observations:
+        if isinstance(obs, (tuple, list)):
+            obs_list.append({
+                "lat": grid.center_lat + (obs[1] / 111.0),
+                "lon": grid.center_lon + (obs[0] / (111.0 * 0.77)),
+                "week": obs[3],
+                "observer_id": "obs_sample",
+                "habitat": obs[2]
+            })
+        else:
+            obs_lat = getattr(obs, "lat", None)
+            if obs_lat is None:
+                obs_lat = grid.center_lat + (getattr(obs, "y_km", getattr(obs, "y", 0.0)) / 111.0)
+            obs_lon = getattr(obs, "lon", None)
+            if obs_lon is None:
+                obs_lon = grid.center_lon + (getattr(obs, "x_km", getattr(obs, "x", 0.0)) / (111.0 * 0.77))
+            obs_list.append({
+                "lat": obs_lat,
+                "lon": obs_lon,
+                "week": getattr(obs, "week", 18),
+                "observer_id": getattr(obs, "observer_id", "obs_sample") or "obs_sample",
+                "habitat": getattr(obs, "habitat", np.array([0.33, 0.33, 0.34]))
+            })
     atlas.ingest_observations(obs_list)
     top_undersampled = atlas.get_top_undersampled_cells(week=18, top_k=10)
 
