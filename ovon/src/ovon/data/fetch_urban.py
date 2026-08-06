@@ -8,6 +8,7 @@ import requests
 
 from ovon.synthetic.generator import CandidateSite, ExistingObservation, SyntheticDataset
 from ovon.data.fetch_public import haversine_distance_km, fetch_gbif_kc_birds, DataFetchResult
+from ovon.data.enviroatlas import fetch_enviroatlas_covariates, covariates_to_habitat_vector
 
 # Curated Kansas City Urban Micro-Habitats, Transit Hubs & Pedestrian Greenways
 FALLBACK_KC_URBAN_POIS = [
@@ -120,7 +121,10 @@ def build_kc_urban_pedestrian_dataset(
     for i, poi in enumerate(pois):
         lat = poi["lat"]
         lon = poi["lon"]
-        hab = np.array(poi.get("habitat", [0.33, 0.33, 0.34]))
+        
+        # Real EPA EnviroAtlas GIS environmental covariates
+        covs = fetch_enviroatlas_covariates(lat, lon, location_name=poi.get("name"))
+        hab = covariates_to_habitat_vector(covs)
 
         y_km = (lat - center_lat) * 111.0
         x_km = (lon - center_lon) * 111.0 * math.cos(math.radians(center_lat))
@@ -143,7 +147,8 @@ def build_kc_urban_pedestrian_dataset(
             bootstrap_predictions=bootstrap_preds,
             park_name=poi["name"],
             lat=lat,
-            lon=lon
+            lon=lon,
+            env_covariates=covs
         )
         # Store urban specific transit metadata
         site.transit_connection = poi.get("transit_connection", "Pedestrian Access")  # type: ignore
@@ -164,7 +169,7 @@ def build_kc_urban_pedestrian_dataset(
         ExistingObservation(
             x_km=(o["lon"] - center_lon) * 111.0 * math.cos(math.radians(center_lat)),
             y_km=(o["lat"] - center_lat) * 111.0,
-            habitat=np.array([0.33, 0.33, 0.34]),
+            habitat=np.array([0.25, 0.25, 0.25, 0.25]),
             week=18,
             lat=o.get("lat"),
             lon=o.get("lon")

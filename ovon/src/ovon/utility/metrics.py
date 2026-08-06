@@ -50,7 +50,8 @@ def spatial_habitat_kernel(
         spatial_length_km = length_spatial
 
     d_space_sq = (x1 - x2)**2 + (y1 - y2)**2
-    d_hab_sq = np.sum((hab1 - hab2)**2)
+    min_len = min(len(hab1), len(hab2))
+    d_hab_sq = float(np.sum((hab1[:min_len] - hab2[:min_len])**2))
 
     k_space = np.exp(-d_space_sq / (2.0 * spatial_length_km**2))
     k_hab = np.exp(-d_hab_sq / (2.0 * length_habitat**2))

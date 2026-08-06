@@ -16,6 +16,7 @@ class CandidateSite:
     park_name: Optional[str] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    env_covariates: Optional[Any] = None
 
 @dataclass
 class ExistingObservation:

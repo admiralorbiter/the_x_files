@@ -19,6 +19,7 @@ except ImportError:
 
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_gbif_kc_birds
 from ovon.data.fetch_urban import build_kc_urban_pedestrian_dataset
+from ovon.data.enviroatlas import fetch_enviroatlas_covariates
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
@@ -65,8 +66,10 @@ st.sidebar.header("⚙️ Route Optimization Engine")
 st.sidebar.caption("Recalculate route itinerary, time budget, and OSRM network paths.")
 
 # Cached Dataset Getter to prevent expensive network fetches on UI reruns
+CACHE_VERSION = "v3_enviroatlas"
+
 @st.cache_data
-def get_cached_dataset(mode_name: str):
+def get_cached_dataset(mode_name: str, cache_version: str = CACHE_VERSION):
     if mode_name == "Kansas City Urban Pedestrian Circuit (Walk-First)":
         return build_kc_urban_pedestrian_dataset()
     elif mode_name == "Kansas City Regional Geographic Demo (Driving)":
@@ -88,7 +91,7 @@ with st.sidebar.form(key="opt_form"):
     use_real_kc = (data_mode == "Kansas City Regional Geographic Demo (Driving)")
 
     # Instant cached dataset lookup (< 0.1ms)
-    preview_ds = get_cached_dataset(data_mode)
+    preview_ds = get_cached_dataset(data_mode, CACHE_VERSION)
     site_names = [getattr(s, "park_name", f"Candidate Site {s.site_id}") for s in preview_ds.candidate_sites]
     start_site_idx = st.selectbox("Starting Location / Hub", options=range(len(site_names)), format_func=lambda i: site_names[i])
 
@@ -101,12 +104,12 @@ dataset = preview_ds
 
 # Run OVON Optimizer (Using Cached Datasets)
 @st.cache_data
-def get_optimized_route(start_idx, budget, lam, mode_name):
-    ds = get_cached_dataset(mode_name)
+def get_optimized_route(start_idx, budget, lam, mode_name, cache_version: str = CACHE_VERSION):
+    ds = get_cached_dataset(mode_name, cache_version)
     greedy_sol = build_greedy_route(ds, start_site_id=start_idx, budget_minutes=float(budget), lambda_redundancy=lam, return_to_hub=True)
     return refine_route_local_search(greedy_sol, ds, lambda_redundancy=lam, return_to_hub=True)
 
-ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode)
+ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode, CACHE_VERSION)
 
 # Fetch OSRM Polyline & Turn-by-Turn Steps (Append origin for closed-loop return leg)
 stop_coords = []
@@ -123,11 +126,11 @@ if len(stop_coords) > 1:
     closed_loop_coords.append(stop_coords[0])
 
 @st.cache_data
-def get_osrm_details(coords, is_urban):
+def get_osrm_details(coords, is_urban, cache_version: str = CACHE_VERSION):
     profile_type = "walking" if is_urban else "driving"
     return fetch_osrm_multistop_route(coords, profile=profile_type)
 
-osrm_res = get_osrm_details(closed_loop_coords, is_urban_pedestrian)
+osrm_res = get_osrm_details(closed_loop_coords, is_urban_pedestrian, CACHE_VERSION)
 
 # Tabs Layout
 tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
@@ -233,6 +236,13 @@ with tab_map:
         lat = getattr(s, "lat", center_lat + (s.y / 111.0))
         lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
+        
+        covs = getattr(s, "env_covariates", None)
+        if covs is None:
+            covs = fetch_enviroatlas_covariates(lat, lon, location_name=park_name)
+            s.env_covariates = covs
+
+        env_html = f"<br>🌳 <b>Tree Canopy:</b> {covs.tree_canopy_pct*100:.0f}%<br>🏢 <b>Impervious:</b> {covs.impervious_surface_pct*100:.0f}%<br>💧 <b>Water Dist:</b> {covs.distance_to_water_km:.2f} km<br>🏞️ <b>NLCD:</b> {covs.nlcd_class}"
 
         folium.CircleMarker(
             location=[lat, lon],
@@ -241,7 +251,7 @@ with tab_map:
             fill=True,
             fill_color="#3388ff",
             fill_opacity=0.7,
-            popup=f"<b>{park_name}</b><br>Candidate Site #{s.site_id}"
+            popup=folium.Popup(f"<b>{park_name}</b><br>Candidate Site #{s.site_id}{env_html}", max_width=280)
         ).add_to(m)
 
     # Plot selected route stops in green with sequence badges
@@ -249,21 +259,29 @@ with tab_map:
         lat = getattr(s, "lat", center_lat + (s.y / 111.0))
         lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
+        
+        covs = getattr(s, "env_covariates", None)
+        if covs is None:
+            covs = fetch_enviroatlas_covariates(lat, lon, location_name=park_name)
+            s.env_covariates = covs
+
+        env_html = f"<br>🌳 <b>Canopy:</b> {covs.tree_canopy_pct*100:.0f}% | 🏢 <b>Impervious:</b> {covs.impervious_surface_pct*100:.0f}%<br>🏞️ <b>Class:</b> {covs.nlcd_class}"
 
         folium.Marker(
             location=[lat, lon],
-            popup=f"<b>Stop {idx+1}: {park_name}</b><br>Protocol: 10-min stationary complete checklist ({observer_profile} level)",
+            popup=folium.Popup(f"<b>Stop {idx+1}: {park_name}</b><br>Protocol: 5-min stationary count ({observer_profile}){env_html}", max_width=300),
             icon=folium.Icon(color="green" if idx > 0 else "blue", icon="info-sign")
         ).add_to(m)
 
-    # Draw OSRM exact road driving polylines (snapping to highways and streets)
+    # Draw OSRM exact road driving / pedestrian polylines
     if osrm_res.get("polyline_coords"):
+        poly_label = "OSRM Pedestrian Route" if is_urban_pedestrian else "OSRM Driving Route"
         folium.PolyLine(
             osrm_res["polyline_coords"],
             color="#02818a",
             weight=5,
             opacity=0.85,
-            popup=f"OSRM Driving Route ({osrm_res['distance_km']:.1f} km)"
+            popup=f"{poly_label} ({osrm_res['distance_km']:.1f} km)"
         ).add_to(m)
 
     if HAS_STREAMLIT_FOLIUM:
@@ -285,12 +303,20 @@ with tab_map:
         elif observer_profile == "Advanced":
             protocol_note += " (Full count of all detected individuals & cryptic vocalizations)"
 
+        covs = getattr(s, "env_covariates", None)
+        if covs is None:
+            covs = fetch_enviroatlas_covariates(lat, lon, location_name=park_name)
+            s.env_covariates = covs
+
+        env_str = f"🌳 {covs.tree_canopy_pct*100:.0f}% Canopy | 🏢 {covs.impervious_surface_pct*100:.0f}% Built | 🏞️ {covs.nlcd_class}"
+
         itinerary_data.append({
             "Stop #": idx + 1,
             "Location Name": park_name,
-            "Transit Access": transit_info,
+            "EPA Environmental GIS Profile": env_str,
+            "Transit / Access Connection": transit_info,
             "Coordinates": f"{lat:.4f}, {lon:.4f}",
-            "Observer Guidance": protocol_note,
+            "Protocol & Guidance": protocol_note,
             "Survey Duration": f"{s.observation_minutes} min"
         })
     st.table(pd.DataFrame(itinerary_data))

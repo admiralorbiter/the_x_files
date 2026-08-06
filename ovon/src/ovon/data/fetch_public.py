@@ -8,6 +8,7 @@ import requests
 
 from ovon.synthetic.generator import CandidateSite, ExistingObservation, SyntheticDataset
 from ovon.data.species_enrichment import resolve_common_name
+from ovon.data.enviroatlas import fetch_enviroatlas_covariates, covariates_to_habitat_vector
 
 @dataclass
 class DataFetchResult:
@@ -171,7 +172,9 @@ def build_kc_real_dataset(
     for i, park in enumerate(parks):
         lat = park["lat"]
         lon = park["lon"]
-        hab = np.array(park.get("habitat", [0.33, 0.33, 0.34]))
+        
+        covs = fetch_enviroatlas_covariates(lat, lon, location_name=park.get("name"))
+        hab = covariates_to_habitat_vector(covs)
 
         # Convert lat/lon offset to approximate km relative to center
         y_km = (lat - center_lat) * 111.0
@@ -195,7 +198,8 @@ def build_kc_real_dataset(
             bootstrap_predictions=bootstrap_preds,
             park_name=park["name"],
             lat=lat,
-            lon=lon
+            lon=lon,
+            env_covariates=covs
         )
         candidate_sites.append(site)
 
@@ -215,7 +219,7 @@ def build_kc_real_dataset(
         ExistingObservation(
             x_km=(o["lon"] - center_lon) * 111.0 * math.cos(math.radians(center_lat)),
             y_km=(o["lat"] - center_lat) * 111.0,
-            habitat=np.array([0.33, 0.33, 0.34]),
+            habitat=np.array([0.25, 0.25, 0.25, 0.25]),
             week=18,
             lat=o.get("lat"),
             lon=o.get("lon")
