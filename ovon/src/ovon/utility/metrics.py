@@ -169,8 +169,11 @@ def compute_set_utility(
 
     weighted_qbc = []
     for s in sites:
-        qbc = getattr(s, "qbc_scores", np.zeros(len(weights)))
-        w_qbc = np.sum(np.array(weights)[:len(qbc)] * qbc)
+        qbc = getattr(s, "qbc_scores", None)
+        if qbc is None or np.all(np.array(qbc) == 0):
+            qbc = getattr(s, "true_p", np.full(len(weights), 0.3))
+        min_len = min(len(weights), len(qbc))
+        w_qbc = np.sum(np.array(weights)[:min_len] * np.array(qbc)[:min_len])
         weighted_qbc.append(w_qbc)
 
     total_info = 0.0
