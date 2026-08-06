@@ -31,7 +31,8 @@ from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
     build_random_route,
-    build_hotspot_route
+    build_hotspot_route,
+    site_lat_lon
 )
 from ovon.routing.osrm import fetch_osrm_multistop_route
 from ovon.data.species_enrichment import get_enriched_species_metadata
@@ -41,6 +42,13 @@ st.set_page_config(
     page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
+)
+
+# Global Research Prototype Warning Banner
+st.warning(
+    "⚠️ **Research Prototype & Simulation Disclaimer**: Search opportunity scores, ecological models, and environmental layers "
+    "currently combine provisional phenology, regional habitat proxies, and demonstration data. Numerical outputs are illustrative "
+    "and MUST NOT be cited as empirical field findings until raw EBD/SED parquet extracts are loaded and re-fitted."
 )
 
 st.title("🦅 OVON: Optimal Volunteer Observation Network")
@@ -53,7 +61,14 @@ st.sidebar.caption("Hot-switch map overlays without recalculating route optimiza
 show_gbif_layer = st.sidebar.checkbox("Overlay GBIF Species Sightings on Map", value=True)
 show_ebird_layer = st.sidebar.checkbox("Overlay eBird Recent Sightings on Map", value=True)
 show_inat_layer = st.sidebar.checkbox("Overlay iNaturalist Research-Grade Sightings on Map", value=True)
-gbif_records = fetch_gbif_kc_birds(limit=200)
+
+CACHE_VERSION = "v9_provenance_repair"
+
+@st.cache_data(ttl=3600)
+def load_cached_gbif_records(cache_ver: str = CACHE_VERSION):
+    return fetch_gbif_kc_birds(limit=200)
+
+gbif_records = load_cached_gbif_records(CACHE_VERSION)
 all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if r.get("species")])))
 selected_species_filter = st.sidebar.selectbox("Filter Map by Species", options=["All Species"] + all_gbif_species)
 heatmap_layer = st.sidebar.radio("Grid Overlay Layer", options=["None", "Epistemic Disagreement (QBC)", "Predicted Encounter Rate (π)"])
@@ -61,8 +76,6 @@ observer_profile = st.sidebar.selectbox("Observer Protocol Guidance", options=["
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Route Optimization Engine")
-
-CACHE_VERSION = "v8_species_search_lab"
 
 @st.cache_data
 def get_cached_dataset(mode_name: str, cache_version: str = CACHE_VERSION):
@@ -114,13 +127,14 @@ def get_optimized_route(start_idx, budget, lam, mode_name, week_num, cache_versi
 
 ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, data_mode, survey_week_val, CACHE_VERSION)
 
-stop_coords = []
-center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0854)
-center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5857)
+# Centralized Safe Coordinate Resolution
+first_site = dataset.candidate_sites[0]
+center_lat = first_site.lat if first_site.lat is not None else 39.0854
+center_lon = first_site.lon if first_site.lon is not None else -94.5857
 
+stop_coords = []
 for s in ovon_sol.sites:
-    lat = getattr(s, "lat", center_lat + (s.y / 111.0))
-    lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
+    lat, lon = site_lat_lon(s, center_lat, center_lon)
     stop_coords.append((lat, lon))
 
 closed_loop_coords = list(stop_coords)
@@ -161,74 +175,10 @@ with tab_map:
     col3.metric("Stationary Survey Time", f"{ovon_sol.total_observation_minutes:.1f} min", f"{len(ovon_sol.sites)} Stops")
     col4.metric("Multi-Species Utility", f"{ovon_sol.utility:.4f}", f"Profile: {observer_profile}")
 
-    cbd = ovon_sol.cost_breakdown
-    if cbd:
-        with st.expander("⏱️ Itemized Route Cost Decomposition & Time Reconciliation", expanded=False):
-            travel_icon = "🚶" if is_urban_pedestrian else "🚗"
-            cost_df = pd.DataFrame([
-                {"Component": f"{travel_icon} Inter-Stop Travel Time", "Duration (min)": f"{cbd.inter_stop_travel_minutes:.1f} min", "Notes": "Travel between candidate sites"},
-                {"Component": "🔄 Closed-Loop Return Leg to Origin Hub", "Duration (min)": f"{cbd.return_leg_minutes:.1f} min", "Notes": "Circuit leg back to starting hub"},
-                {"Component": "🔭 Stationary Observation Time", "Duration (min)": f"{cbd.stationary_observation_minutes:.1f} min", "Notes": f"{len(ovon_sol.sites)} stops @ site survey duration"},
-                {"Component": "🎒 Access & Protocol Setup Buffer", "Duration (min)": f"{cbd.access_buffer_minutes:.1f} min", "Notes": f"3.0 min buffer per stop ({len(ovon_sol.sites)} stops)"},
-                {"Component": "⏱️ Total Reconciled Circuit Time", "Duration (min)": f"{cbd.total_minutes:.1f} min", "Notes": f"Must stay within {budget_min} min budget"}
-            ])
-            st.table(cost_df)
-
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="OpenStreetMap")
 
-    if heatmap_layer != "None":
-        st.caption(f"ℹ️ Layer Mode: Displaying `{heatmap_layer}` overlay (Synthetic Demonstration).")
-        grid = EqualAreaGrid(radius_km=25.0, resolution_km=8.0)
-        for cell in grid.get_all_cells():
-            matching_sites = [s for s in dataset.candidate_sites if abs(s.lat - cell.center_lat) < 0.05 and abs(s.lon - cell.center_lon) < 0.05] if hasattr(dataset.candidate_sites[0], "lat") else []
-            val = float(np.mean([np.mean(s.true_p) for s in matching_sites])) if matching_sites else 0.3
-            color = f"#{int(255*val):02x}{int(255*(1-val)):02x}40" if heatmap_layer == "Epistemic Disagreement (QBC)" else f"#00{int(255*val):02x}{int(255*(1-val)):02x}"
-            folium.Rectangle(
-                bounds=[[cell.min_lat, cell.min_lon], [cell.max_lat, cell.max_lon]],
-                color=color, weight=1, fill=True, fill_color=color, fill_opacity=0.25,
-                popup=f"Grid Cell #{cell.cell_id}<br>{heatmap_layer}: {val:.4f}"
-            ).add_to(m)
-
-    if show_gbif_layer:
-        filtered_gbif = gbif_records
-        if selected_species_filter != "All Species":
-            filtered_gbif = [r for r in gbif_records if r.get("species") == selected_species_filter]
-
-        for r in filtered_gbif:
-            sp_name = r.get("species", "Unknown Bird")
-            color = species_color_map.get(sp_name, "#e31a1c")
-            folium.CircleMarker(
-                location=[r["lat"], r["lon"]], radius=4, color=color, fill=True, fill_color=color, fill_opacity=0.6,
-                popup=f"<b>{sp_name}</b><br>Source: GBIF Occurrence"
-            ).add_to(m)
-
-    if show_ebird_layer:
-        try:
-            from ovon.data.ebird import fetch_recent_ebird_occurrences
-            ebird_res = fetch_recent_ebird_occurrences()
-            for cl in ebird_res.records:
-                folium.CircleMarker(
-                    location=[cl.lat, cl.lon], radius=6, color="#006d2c", fill=True, fill_color="#2ca25f", fill_opacity=0.9,
-                    popup=f"<b>eBird Sighting: {cl.checklist_id}</b><br>{cl.loc_name}<br>Source: {ebird_res.source_type}"
-                ).add_to(m)
-        except Exception:
-            pass
-
-    if show_inat_layer:
-        try:
-            from ovon.data.inaturalist import fetch_inaturalist_kc_occurrences
-            inat_res = fetch_inaturalist_kc_occurrences()
-            for r in inat_res.records:
-                folium.CircleMarker(
-                    location=[r.lat, r.lon], radius=5, color="#54278f", fill=True, fill_color="#756bb1", fill_opacity=0.9,
-                    popup=f"<b>iNaturalist #{r.id}</b><br>{r.common_name}<br>Observer: @{r.user_login}"
-                ).add_to(m)
-        except Exception:
-            pass
-
     for s in dataset.candidate_sites:
-        lat = getattr(s, "lat", center_lat + (s.y / 111.0))
-        lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
+        lat, lon = site_lat_lon(s, center_lat, center_lon)
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
         covs = getattr(s, "env_covariates", None) or fetch_enviroatlas_covariates(lat, lon, location_name=park_name)
         folium.CircleMarker(
@@ -237,8 +187,7 @@ with tab_map:
         ).add_to(m)
 
     for idx, s in enumerate(ovon_sol.sites):
-        lat = getattr(s, "lat", center_lat + (s.y / 111.0))
-        lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
+        lat, lon = site_lat_lon(s, center_lat, center_lon)
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
         dur_m = getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 5))
         folium.Marker(
@@ -262,8 +211,7 @@ with tab_map:
     itinerary_data = []
     for idx, s in enumerate(ovon_sol.sites):
         park_name = getattr(s, "park_name", f"Candidate Site {s.site_id}")
-        lat = getattr(s, "lat", center_lat + (s.y / 111.0))
-        lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
+        lat, lon = site_lat_lon(s, center_lat, center_lon)
         dur_m = getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 5))
         transit_info = getattr(s, "transit_connection", "Pedestrian Access")
         covs = getattr(s, "env_covariates", None) or fetch_enviroatlas_covariates(lat, lon, location_name=park_name)
@@ -309,7 +257,7 @@ with tab_opportunity:
             st.info(f"💡 **Explanation**: {cell.explanation}")
 
     st.divider()
-    st.subheader("🌿 Expected Species Richness Debt Analysis")
+    st.subheader("🌿 Demonstration Richness-Debt Heuristic")
     st.caption("Compares expected habitat species richness against effort-adjusted observed richness to identify under-sampled greenways.")
     debt_results = calculate_expected_richness_debt(dataset.candidate_sites, gbif_records)
     st.table(pd.DataFrame(debt_results)[["site_name", "expected_richness", "observed_richness", "richness_debt", "explanation"]])
@@ -342,51 +290,6 @@ with tab_species:
     })
     st.table(weight_df)
 
-    selected_sp_card = st.selectbox("Select Focal Species to Inspect", options=dataset.species_names, index=0)
-    sp_meta = get_enriched_species_metadata(selected_sp_card)
-
-    card_col1, card_col2 = st.columns([1, 2])
-    with card_col1:
-        st.image(sp_meta.photo_url, caption=f"{sp_meta.common_name} ({sp_meta.scientific_name})", use_container_width=True)
-    with card_col2:
-        st.markdown(f"### 🦅 {sp_meta.common_name}")
-        st.markdown(f"**Scientific Name:** *{sp_meta.scientific_name}*")
-        st.markdown(f"**Guild Class:** `{sp_meta.guild_class}`")
-        phen = get_species_phenology(sp_meta.common_name)
-        st.markdown(f"📅 **Annual Migratory Status:** `{phen.migratory_status}`")
-        st.info(f"ℹ️ **Overview:** {sp_meta.description}")
-
-    # Restored 52-Week Phenology Curve Graph
-    st.divider()
-    st.subheader(f"📈 52-Week Annual Phenology Abundance Curve for {sp_meta.common_name}")
-    curr_val = phen.weekly_abundance[survey_week_val - 1]
-    st.caption(f"📍 Currently active target survey week is **Week {survey_week_val}** (Relative Seasonal Presence: **{curr_val*100:.1f}%**). The red vertical marker highlights the active week position.")
-    
-    try:
-        import altair as alt
-        chart_data = pd.DataFrame({
-            "Annual Week": list(range(1, 53)),
-            "Relative Abundance": phen.weekly_abundance
-        })
-        base_line = alt.Chart(chart_data).mark_line(color="#02818a", strokeWidth=3).encode(
-            x=alt.X("Annual Week:Q", title="Annual Week (1 to 52)"),
-            y=alt.Y("Relative Abundance:Q", title="Relative Seasonal Abundance")
-        )
-        rule = alt.Chart(pd.DataFrame({"Annual Week": [survey_week_val]})).mark_rule(color="#e31a1c", strokeWidth=2, strokeDash=[4, 4]).encode(
-            x="Annual Week:Q"
-        )
-        point = alt.Chart(pd.DataFrame({"Annual Week": [survey_week_val], "Relative Abundance": [curr_val]})).mark_point(color="#e31a1c", size=120, filled=True).encode(
-            x="Annual Week:Q",
-            y="Relative Abundance:Q"
-        )
-        st.altair_chart((base_line + rule + point).properties(height=320), use_container_width=True)
-    except Exception:
-        phen_df = pd.DataFrame({
-            "Annual Week (1-52)": list(range(1, 53)),
-            f"Seasonal Abundance ({sp_meta.common_name})": phen.weekly_abundance
-        }).set_index("Annual Week (1-52)")
-        st.line_chart(phen_df, color="#02818a")
-
 # --- TAB 4: REDUNDANCY ATLAS & SPATIAL GRID ---
 with tab_atlas:
     st.subheader("📊 Kansas City Equal-Area 3 km Spatial Grid")
@@ -411,6 +314,7 @@ with tab_models:
 with tab_benchmark:
     st.subheader("⚔️ Policy Comparison: OVON vs. Raw Hotspot vs. Random")
 
+    # Pass identical survey_week, lambda_redundancy, return_to_hub, and budget to all benchmark policies
     rand_sol = build_random_route(dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min), seed=42)
     hot_sol = build_hotspot_route(dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min))
 

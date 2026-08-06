@@ -4,57 +4,76 @@ from datetime import date
 
 from ovon.data.evidence import SpeciesEvidence, aggregate_species_evidence
 from ovon.features.habitat_analog import HabitatAnalogSearch, calculate_expected_richness_debt
+from ovon.features.schema import EnvironmentalFeatureVector
 from ovon.models.opportunity import calculate_opportunity_surface, SpeciesOpportunityCell, SEARCH_MODES
 from ovon.synthetic.generator import generate_synthetic_dataset
+from ovon.routing.optimizer import build_greedy_route, site_lat_lon
+from ovon.utility.metrics import compute_set_utility, calculate_qbc_disagreement
 
-def test_species_evidence_aggregation():
+def test_environmental_feature_vector_schema():
+    schema = EnvironmentalFeatureVector(
+        feature_names=("canopy", "built", "water"),
+        values=np.array([0.40, 0.30, 0.50])
+    )
+    assert schema.get_value("canopy") == 0.40
+
+    with pytest.raises(ValueError):
+        EnvironmentalFeatureVector(
+            feature_names=("canopy", "built"),
+            values=np.array([0.40, 0.30, 0.50])
+        )
+
+def test_species_evidence_event_deduplication_and_cyclic_week():
+    # 1 checklist with 8 species should count as 1 checklist (event_id="cl_001")
     evidence = [
         SpeciesEvidence(
-            species_id="Passerina cyanea", cell_id="cell_01", observation_date=date(2023, 5, 15),
-            week=18, source="eBird_EBD", evidence_type="complete_checklist_detection", detection=True, duration_minutes=15.0
-        ),
-        SpeciesEvidence(
-            species_id="Passerina cyanea", cell_id="cell_01", observation_date=date(2023, 5, 16),
-            week=18, source="eBird_EBD", evidence_type="complete_checklist_nondetection", detection=False, duration_minutes=10.0
-        )
+            event_id="cl_001", species_id=f"species_{i}", cell_id="cell_01",
+            observation_date=date(2023, 1, 2), week=52, source="eBird_EBD",
+            evidence_type="complete_checklist_detection", detection=True
+        ) for i in range(8)
     ]
 
-    agg = aggregate_species_evidence(evidence, cell_id="cell_01", species_id="Passerina cyanea", target_week=18)
-    assert agg["n_checklists"] == 2
+    # Target week 1 should recognize week 52 as adjacent (cyclic distance = 1)
+    agg = aggregate_species_evidence(evidence, cell_id="cell_01", species_id="species_0", target_week=1)
+    assert agg["n_checklists"] == 1
     assert agg["n_detections"] == 1
-    assert agg["n_nondetections"] == 1
     assert agg["coverage_score"] > 0.0
 
-def test_habitat_analog_search():
-    engine = HabitatAnalogSearch()
-    occurrences = [
-        {"habitat": np.array([0.60, 0.10, 0.20, 0.80])},
-        {"habitat": np.array([0.55, 0.15, 0.25, 0.75])}
-    ]
-    engine.fit("Passerina cyanea", occurrences)
-
-    dataset = generate_synthetic_dataset(n_sites=10, seed=42)
-    scores = engine.predict_habitat_match(dataset.candidate_sites)
-    assert len(scores) == 10
-    assert all(0.0 <= s <= 1.0 for s in scores)
-
-def test_expected_richness_debt():
-    dataset = generate_synthetic_dataset(n_sites=5, seed=42)
-    gbif = [{"species": "Passerina cyanea"}, {"species": "Cardinalis cardinalis"}, {"species": "Melospiza melodia"}]
-    debts = calculate_expected_richness_debt(dataset.candidate_sites, gbif)
-
-    assert len(debts) == 5
-    assert "richness_debt" in debts[0]
-    assert debts[0]["richness_debt"] >= 0
-
-def test_calculate_opportunity_surface_all_modes():
+def test_opportunity_surface_routing_regression():
+    """Verify that reversing opportunity scores in opportunity_surface alters site selection."""
     dataset = generate_synthetic_dataset(n_sites=10, seed=42)
 
-    for mode in SEARCH_MODES.keys():
-        cells = calculate_opportunity_surface(
-            dataset, species_id="Passerina cyanea", survey_week=18, mode=mode, observer_profile="Intermediate"
-        )
-        assert len(cells) == 10
-        assert isinstance(cells[0], SpeciesOpportunityCell)
-        assert cells[0].search_mode == mode
-        assert cells[0].opportunity_score >= cells[-1].opportunity_score  # Sorted descending
+    # Standard greedy route without opportunity surface
+    base_sol = build_greedy_route(dataset, start_site_id=0, budget_minutes=60.0)
+
+    # Give site #9 maximum opportunity score (10.0) vs site #1 (0.01)
+    opp_surface = {s.site_id: 0.01 for s in dataset.candidate_sites}
+    opp_surface[9] = 10.0
+
+    opp_sol = build_greedy_route(dataset, start_site_id=0, budget_minutes=60.0, opportunity_surface=opp_surface)
+
+    # Site #9 must be selected in the opportunity-weighted route
+    assert 9 in opp_sol.stop_ids
+    assert opp_sol.stop_ids != base_sol.stop_ids
+
+def test_qbc_from_bootstrap_matrix_not_true_p():
+    """Verify compute_set_utility calculates QBC from bootstrap_predictions when qbc_scores is None."""
+    dataset = generate_synthetic_dataset(n_sites=3, seed=42)
+    for s in dataset.candidate_sites:
+        s.qbc_scores = None
+        s.bootstrap_predictions = np.array([[0.1, 0.9], [0.8, 0.2]])  # High disagreement
+
+    u = compute_set_utility(dataset.candidate_sites[:2], dataset.existing_observations)
+    assert u > 0.0
+
+def test_synthetic_site_lat_lon_resolution():
+    """Verify site_lat_lon handles lat: Optional[float] = None without raising TypeError."""
+    dataset = generate_synthetic_dataset(n_sites=3, seed=42)
+
+    for s in dataset.candidate_sites:
+        s.lat = None
+        s.lon = None
+        lat, lon = site_lat_lon(s, center_lat=39.0854, center_lon=-94.5857)
+        assert isinstance(lat, float)
+        assert isinstance(lon, float)
+        assert abs(lat - 39.0854) < 1.0

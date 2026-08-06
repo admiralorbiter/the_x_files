@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import List, Dict, Any, Optional, Literal
 import numpy as np
+from ovon.utility.metrics import temporal_cyclic_distance
 
 EvidenceType = Literal[
     "complete_checklist_detection",
@@ -14,8 +15,9 @@ EvidenceType = Literal[
 class SpeciesEvidence:
     """
     Decoupled species-aware ecological evidence record.
-    Tracks protocol, effort covariates, and explicit detection/non-detection status.
+    Tracks unique event_id, protocol, effort covariates, and explicit detection/non-detection status.
     """
+    event_id: str
     species_id: str
     cell_id: str
     observation_date: date
@@ -26,8 +28,8 @@ class SpeciesEvidence:
     distance_km: Optional[float] = None
     observer_count: Optional[int] = None
     detection: Optional[bool] = None
-    lat: float = 0.0
-    lon: float = 0.0
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 def aggregate_species_evidence(
     evidence_records: List[SpeciesEvidence],
@@ -38,19 +40,25 @@ def aggregate_species_evidence(
 ) -> Dict[str, Any]:
     """
     Aggregate checklist effort, detections, and calculate local coverage score C(s, i, t) in [0, 1).
+    Deduplicates complete checklists by unique event_id and uses cyclic annual week distance.
     """
     cell_records = [
         r for r in evidence_records
-        if r.cell_id == cell_id and abs(r.week - target_week) <= week_window
+        if r.cell_id == cell_id and temporal_cyclic_distance(r.week, target_week) <= week_window
     ]
     sp_records = [r for r in cell_records if r.species_id == species_id]
 
-    n_checklists = len([r for r in cell_records if "complete_checklist" in r.evidence_type])
+    # Deduplicate complete checklist count by unique event_id
+    complete_checklist_ids = {
+        r.event_id for r in cell_records if "complete_checklist" in r.evidence_type
+    }
+    n_checklists = len(complete_checklist_ids)
+
     n_detections = len([r for r in sp_records if r.detection is True])
     n_nondetections = len([r for r in sp_records if r.detection is False])
     recent_occurrences = len([r for r in sp_records if r.evidence_type in ("presence_only", "photo_verified_presence")])
 
-    # Effective coverage C(s, i, t) formula: diminishing returns on complete checklists
+    # Diminishing returns coverage score C(s, i, t)
     coverage_score = 1.0 - np.exp(-0.40 * n_checklists)
 
     return {

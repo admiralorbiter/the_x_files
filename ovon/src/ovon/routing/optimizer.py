@@ -1,4 +1,5 @@
 import copy
+import math
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Set
 import numpy as np
@@ -29,6 +30,17 @@ class RouteSolution:
     utility: float
     budget_minutes: float
     cost_breakdown: Optional[RouteCostBreakdown] = None
+
+def site_lat_lon(
+    site: CandidateSite,
+    center_lat: float = 39.0854,
+    center_lon: float = -94.5857
+) -> Tuple[float, float]:
+    """Safely resolve (lat, lon) for CandidateSite objects handling lat: Optional[float] = None."""
+    lat = site.lat if site.lat is not None else center_lat + (site.y / 111.0)
+    lon_scale = 111.0 * math.cos(math.radians(center_lat))
+    lon = site.lon if site.lon is not None else center_lon + (site.x / lon_scale)
+    return float(lat), float(lon)
 
 def calculate_route_travel_time(
     stop_ids: List[int],
@@ -86,7 +98,7 @@ def calculate_route_total_time(
 
 def filter_valid_candidates(dataset: SyntheticDataset) -> List[CandidateSite]:
     """Filter out non-public or unsafe candidate sites."""
-    return [s for s in dataset.candidate_sites if s.is_public and s.is_safe]
+    return [s for s in dataset.candidate_sites if getattr(s, "is_public", True) and getattr(s, "is_safe", True)]
 
 def build_greedy_route(
     dataset: SyntheticDataset,
@@ -101,7 +113,7 @@ def build_greedy_route(
 ) -> RouteSolution:
     """
     Construct a route greedily based on marginal utility gain per minute added.
-    Supports fixed observation duration and opportunity surface weighting.
+    Propagates opportunity_surface through every utility evaluation.
     Preserves dataset object immutability by creating isolated site copies.
     """
     valid_sites = filter_valid_candidates(dataset)
@@ -167,7 +179,8 @@ def build_greedy_route(
                 dataset.existing_observations,
                 species_names=species_names,
                 lambda_redundancy=lambda_redundancy,
-                survey_week=survey_week
+                survey_week=survey_week,
+                opportunity_surface=opportunity_surface
             )
             marginal_u = new_utility - current_utility
             added_time = max(0.1, total_m - cur_tot_m)
@@ -201,7 +214,8 @@ def build_greedy_route(
                         dataset.existing_observations,
                         species_names=species_names,
                         lambda_redundancy=lambda_redundancy,
-                        survey_week=survey_week
+                        survey_week=survey_week,
+                        opportunity_surface=opportunity_surface
                     )
                     marginal_u = new_utility - current_utility
                     added_time = 5.0
@@ -250,10 +264,12 @@ def refine_route_local_search(
     lambda_redundancy: float = 0.5,
     survey_week: int = 18,
     return_to_hub: bool = True,
-    access_buffer_minutes: float = 3.0
+    access_buffer_minutes: float = 3.0,
+    opportunity_surface: Optional[Dict[int, float]] = None
 ) -> RouteSolution:
     """
     Refine a route using 2-opt reordering and greedy marginal duration tuning without mutating cached dataset objects.
+    Propagates opportunity_surface through all utility calculations.
     """
     valid_sites = filter_valid_candidates(dataset)
     site_dict = {s.site_id: s for s in valid_sites}
@@ -298,7 +314,8 @@ def refine_route_local_search(
 
         cur_u = compute_set_utility(
             current_stops, dataset.existing_observations,
-            species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+            species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week,
+            opportunity_surface=opportunity_surface
         )
 
         for idx, stop in enumerate(current_stops):
@@ -316,7 +333,8 @@ def refine_route_local_search(
             if tot_m <= budget:
                 new_u = compute_set_utility(
                     test_stops, dataset.existing_observations,
-                    species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+                    species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week,
+                    opportunity_surface=opportunity_surface
                 )
                 marginal_g = (new_u - cur_u) / 5.0
                 if marginal_g > best_marginal_gain and marginal_g > 0:
@@ -332,7 +350,11 @@ def refine_route_local_search(
         current_stops, current_ids, dataset.travel_time_matrix,
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
-    final_u = compute_set_utility(current_stops, dataset.existing_observations, species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week)
+    final_u = compute_set_utility(
+        current_stops, dataset.existing_observations,
+        species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week,
+        opportunity_surface=opportunity_surface
+    )
 
     return RouteSolution(
         sites=current_stops,

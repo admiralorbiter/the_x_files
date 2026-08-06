@@ -167,13 +167,20 @@ def compute_set_utility(
     if species_names:
         weights = get_weekly_species_weights(species_names, survey_week)
     else:
-        weights = [1.0 / max(1, len(sites[0].qbc_scores))] * len(sites[0].qbc_scores)
+        qbc_0 = getattr(sites[0], "qbc_scores", None)
+        n_sp = len(qbc_0) if qbc_0 is not None else 3
+        weights = [1.0 / max(1, n_sp)] * n_sp
 
     weighted_qbc = []
     for s in sites:
         qbc = getattr(s, "qbc_scores", None)
         if qbc is None or np.all(np.array(qbc) == 0):
-            qbc = getattr(s, "true_p", np.full(len(weights), 0.3))
+            bootstrap = getattr(s, "bootstrap_predictions", None)
+            if bootstrap is not None and getattr(bootstrap, "size", 0) > 0:
+                qbc = calculate_qbc_disagreement(bootstrap)
+            else:
+                qbc = np.zeros(len(weights))
+
         min_len = min(len(weights), len(qbc))
         w_qbc = np.sum(np.array(weights)[:min_len] * np.array(qbc)[:min_len])
 

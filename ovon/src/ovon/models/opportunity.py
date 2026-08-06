@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 
 from ovon.data.phenology import get_species_phenology
+from ovon.data.evidence import SpeciesEvidence, aggregate_species_evidence
 from ovon.features.habitat_analog import HabitatAnalogSearch
 
 SEARCH_MODES = {
@@ -12,6 +13,13 @@ SEARCH_MODES = {
     "uncertainty_frontier": "3. Scientific Uncertainty Frontier (High Model Disagreement & Entropy)",
     "hard_to_detect": "4. Hard-to-Detect Opportunity (Cryptic Species Recommending 15-20 Min Surveys)",
     "range_edge_surprise": "5. Potential Range-Edge / Unexpected Observation (High Exploration Value)"
+}
+
+# Species detectability metadata catalog
+SPECIES_DETECTABILITY_CATALOG = {
+    "Passerina cyanea": {"detectability_class": "medium", "recommended_duration": 15, "cryptic_multiplier": 1.5},
+    "Setophaga coronata": {"detectability_class": "low", "recommended_duration": 20, "cryptic_multiplier": 2.0},
+    "Cardinalis cardinalis": {"detectability_class": "high", "recommended_duration": 5, "cryptic_multiplier": 1.0}
 }
 
 @dataclass(frozen=True)
@@ -39,62 +47,88 @@ def calculate_opportunity_surface(
     species_id: str,
     survey_week: int = 18,
     mode: str = "expected_undocumented",
-    observer_profile: str = "Intermediate"
+    observer_profile: str = "Intermediate",
+    species_evidence: Optional[List[SpeciesEvidence]] = None
 ) -> List[SpeciesOpportunityCell]:
     """
     Generate ranked SpeciesOpportunityCell surface across candidate sites for 1 of 5 search modes.
+    Decouples ecological presence psi from conditional detectability p_detect|present.
     """
     phen = get_species_phenology(species_id)
     weekly_abundance = phen.weekly_abundance[min(51, max(0, survey_week - 1))]
 
-    # Learn habitat analog signature from existing presence points if available
+    # 1. Fit HabitatAnalogSearch using actual filtered species evidence if available
     analog_engine = HabitatAnalogSearch()
-    sample_occurrences = [
-        {"habitat": s.habitat} for s in dataset.candidate_sites[:10]
-    ]
-    analog_engine.fit(species_id, sample_occurrences)
+    
+    occurrence_records = []
+    if species_evidence:
+        occurrence_records = [
+            {"lat": r.lat, "lon": r.lon}
+            for r in species_evidence
+            if r.species_id == species_id and r.detection is True
+        ]
+
+    if not occurrence_records:
+        # Fallback to candidate sites sample with background scaling
+        occurrence_records = [{"habitat": s.habitat} for s in dataset.candidate_sites[:5]]
+
+    analog_engine.fit(species_id, occurrence_records, background_candidates=dataset.candidate_sites)
     analog_matches = analog_engine.predict_habitat_match(dataset.candidate_sites)
 
+    meta = SPECIES_DETECTABILITY_CATALOG.get(species_id, {"detectability_class": "medium", "recommended_duration": 10, "cryptic_multiplier": 1.2})
     profile_multiplier = {"Beginner": 0.70, "Intermediate": 1.0, "Advanced": 1.30}.get(observer_profile, 1.0)
-    cryptic_value = 2.0 if "warbler" in species_id.lower() or "bunting" in species_id.lower() else 1.0
+    cryptic_value = float(meta["cryptic_multiplier"])
 
     cells = []
     for idx, s in enumerate(dataset.candidate_sites):
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
+        cell_key = f"cell_{s.site_id}"
         covs = getattr(s, "env_covariates", None)
         canopy = covs.tree_canopy_pct if covs else s.habitat[0]
 
-        # 1. Expected Presence psi = weekly_abundance * habitat_similarity
+        # 1. Ecological Presence psi(s, i, t) in [0, 1]
         psi = float(np.clip(weekly_abundance * analog_matches[idx] * (1.2 if canopy > 0.3 else 0.8), 0.01, 0.99))
 
-        # 2. Detection Probability p = logit^-1(psi + duration_effort)
+        # 2. Conditional Detectability given presence: p_detect_given_present = 1 - exp(-r * tau)
         dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
-        p_detect = float(np.clip(1.0 - math.exp(-0.10 * dur * psi * profile_multiplier), 0.05, 0.95))
+        p_detect_given_present = float(1.0 - math.exp(-0.08 * dur * profile_multiplier))
 
-        # 3. Model Disagreement & Epistemic Uncertainty
-        qbc_scores = getattr(s, "qbc_scores", [0.4])
-        qbc_disagreement = float(np.mean(qbc_scores)) if len(qbc_scores) > 0 else 0.40
+        # Total Encounter Probability P(encounter) = psi * p_detect_given_present
+        p_encounter = float(psi * p_detect_given_present)
+
+        # 3. Model Disagreement & Epistemic Uncertainty from QBC or Bootstrap Matrix
+        qbc_scores = getattr(s, "qbc_scores", None)
+        if qbc_scores is not None and len(qbc_scores) > 0:
+            qbc_disagreement = float(np.mean(qbc_scores))
+        else:
+            qbc_disagreement = 0.35
+
         entropy = float(-psi * math.log2(psi) - (1.0 - psi) * math.log2(1.0 - psi))
 
-        # 4. Checklist Effort & Local Coverage C
-        n_prev = getattr(s, "n_checklists", idx % 3)
-        coverage_C = float(1.0 - math.exp(-0.35 * n_prev))
+        # 4. Evidence Aggregation & Checklist Effort Coverage C(s, i, t)
+        if species_evidence:
+            ev_agg = aggregate_species_evidence(species_evidence, cell_id=cell_key, species_id=species_id, target_week=survey_week)
+            n_checklists = ev_agg["n_checklists"]
+            coverage_C = ev_agg["coverage_score"]
+        else:
+            n_checklists = getattr(s, "n_checklists", 1 if idx % 3 == 0 else 0)
+            coverage_C = float(1.0 - math.exp(-0.35 * n_checklists))
 
         # 5. Compute Mode-Specific Opportunity Score
         if mode == "likely_encounter":
-            score = psi * p_detect
-            expl = f"High predicted encounter rate ({score*100:.1f}%) during Week {survey_week}."
+            score = p_encounter
+            expl = f"High expected encounter rate ({p_encounter*100:.1f}%) during Week {survey_week}."
         elif mode == "expected_undocumented":
             score = psi * (1.0 - coverage_C)
-            expl = f"High habitat match ({analog_matches[idx]*100:.0f}%) with only {n_prev} prior checklists."
+            expl = f"High habitat match ({analog_matches[idx]*100:.0f}%) with only {n_checklists} prior complete checklists."
         elif mode == "uncertainty_frontier":
             score = entropy * qbc_disagreement * (1.0 - coverage_C)
             expl = f"High model disagreement ({qbc_disagreement:.3f}) and entropy ({entropy:.3f})."
         elif mode == "hard_to_detect":
-            score = psi * (1.0 - p_detect) * cryptic_value
-            expl = f"Cryptic target with low detectability ({p_detect*100:.0f}%), recommending 15-20 min surveys."
+            score = psi * (1.0 - p_detect_given_present) * cryptic_value
+            expl = f"Cryptic target ({meta['detectability_class']}), recommending {meta['recommended_duration']} min stationary counts."
         elif mode == "range_edge_surprise":
-            range_edge = 1.0 if idx % 2 == 0 else 0.5
+            range_edge = float(getattr(s, "range_edge_index", 0.65))
             score = qbc_disagreement * range_edge * analog_matches[idx]
             expl = f"Range-edge exploratory site with high potential detection impact."
         else:
@@ -107,7 +141,7 @@ def calculate_opportunity_surface(
             site_name=park_name,
             week=survey_week,
             expected_presence=psi,
-            expected_encounter=psi * p_detect,
+            expected_encounter=p_encounter,
             epistemic_uncertainty=entropy,
             checklist_effort=coverage_C,
             habitat_similarity=analog_matches[idx],
