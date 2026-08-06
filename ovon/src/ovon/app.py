@@ -10,6 +10,7 @@ import streamlit as st
 import folium
 import pandas as pd
 import numpy as np
+import altair as alt
 
 try:
     from streamlit_folium import st_folium
@@ -18,13 +19,15 @@ except ImportError:
     HAS_STREAMLIT_FOLIUM = False
 
 from ovon.data.fetch_public import build_kc_real_dataset, fetch_gbif_kc_birds
+from ovon.data.ebird import fetch_recent_ebird_occurrences
+from ovon.data.inaturalist import fetch_inaturalist_kc_occurrences
 from ovon.data.fetch_urban import build_kc_urban_pedestrian_dataset
 from ovon.data.enviroatlas import fetch_enviroatlas_covariates
 from ovon.data.phenology import get_species_phenology, get_weekly_species_weights
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
-from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
+from ovon.data.evidence import SpeciesEvidence, build_species_evidence
 from ovon.models.opportunity import calculate_opportunity_surface, SEARCH_MODES
 from ovon.features.habitat_analog import calculate_expected_richness_debt
 from ovon.routing.optimizer import (
@@ -62,14 +65,27 @@ show_gbif_layer = st.sidebar.checkbox("Overlay GBIF Species Sightings on Map", v
 show_ebird_layer = st.sidebar.checkbox("Overlay eBird Recent Sightings on Map", value=True)
 show_inat_layer = st.sidebar.checkbox("Overlay iNaturalist Research-Grade Sightings on Map", value=True)
 
-CACHE_VERSION = "v9_provenance_repair"
+CACHE_VERSION = "v10_multisource_map_fix"
 
 @st.cache_data(ttl=3600)
 def load_cached_gbif_records(cache_ver: str = CACHE_VERSION):
     return fetch_gbif_kc_birds(limit=200)
 
+@st.cache_data(ttl=3600)
+def load_cached_ebird_records(cache_ver: str = CACHE_VERSION):
+    res = fetch_recent_ebird_occurrences()
+    return res.records
+
+@st.cache_data(ttl=3600)
+def load_cached_inat_records(cache_ver: str = CACHE_VERSION):
+    res = fetch_inaturalist_kc_occurrences()
+    return res.records
+
 gbif_records = load_cached_gbif_records(CACHE_VERSION)
-all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if r.get("species")])))
+ebird_records = load_cached_ebird_records(CACHE_VERSION)
+inat_records = load_cached_inat_records(CACHE_VERSION)
+
+all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if isinstance(r, dict) and r.get("species")])))
 selected_species_filter = st.sidebar.selectbox("Filter Map by Species", options=["All Species"] + all_gbif_species)
 heatmap_layer = st.sidebar.radio("Grid Overlay Layer", options=["None", "Epistemic Disagreement (QBC)", "Predicted Encounter Rate (π)"])
 observer_profile = st.sidebar.selectbox("Observer Protocol Guidance", options=["Beginner", "Intermediate", "Advanced"], index=0)
@@ -196,6 +212,63 @@ with tab_map:
             icon=folium.Icon(color="green" if idx > 0 else "blue", icon="info-sign")
         ).add_to(m)
 
+    if show_gbif_layer and gbif_records:
+        for rec in gbif_records:
+            rec_sp = rec.get("species") if isinstance(rec, dict) else getattr(rec, "species", None)
+            if selected_species_filter != "All Species" and rec_sp != selected_species_filter:
+                continue
+            r_lat = rec.get("lat") if isinstance(rec, dict) else getattr(rec, "lat", None)
+            r_lon = rec.get("lon") if isinstance(rec, dict) else getattr(rec, "lon", None)
+            if r_lat is not None and r_lon is not None:
+                sp_color = species_color_map.get(rec_sp, "#e31a1c")
+                folium.CircleMarker(
+                    location=[r_lat, r_lon], radius=4, color=sp_color, fill=True, fill_color=sp_color, fill_opacity=0.6,
+                    popup=f"<b>GBIF Sighting</b>: {rec_sp or 'Sighting'}"
+                ).add_to(m)
+
+    if show_ebird_layer and ebird_records:
+        for rec in ebird_records:
+            r_lat = getattr(rec, "lat", None) if hasattr(rec, "lat") else (rec.get("lat") if isinstance(rec, dict) else None)
+            r_lon = getattr(rec, "lon", None) if hasattr(rec, "lon") else (rec.get("lon") if isinstance(rec, dict) else None)
+            sp_list = getattr(rec, "species_list", []) if hasattr(rec, "species_list") else (rec.get("species_list", []) if isinstance(rec, dict) else [])
+            loc_name = getattr(rec, "loc_name", "eBird Location") if hasattr(rec, "loc_name") else (rec.get("loc_name", "eBird Location") if isinstance(rec, dict) else "eBird Location")
+            if r_lat is not None and r_lon is not None:
+                folium.Marker(
+                    location=[r_lat, r_lon],
+                    popup=f"<b>eBird Recent Checklist</b>: {loc_name}<br>Species count: {len(sp_list)}",
+                    icon=folium.Icon(color="purple", icon="flag")
+                ).add_to(m)
+
+    if show_inat_layer and inat_records:
+        for rec in inat_records:
+            rec_sp = getattr(rec, "species_name", None) if hasattr(rec, "species_name") else (rec.get("species_name") if isinstance(rec, dict) else None)
+            if selected_species_filter != "All Species" and rec_sp != selected_species_filter:
+                continue
+            r_lat = getattr(rec, "lat", None) if hasattr(rec, "lat") else (rec.get("lat") if isinstance(rec, dict) else None)
+            r_lon = getattr(rec, "lon", None) if hasattr(rec, "lon") else (rec.get("lon") if isinstance(rec, dict) else None)
+            comm_name = getattr(rec, "common_name", rec_sp) if hasattr(rec, "common_name") else (rec.get("common_name", rec_sp) if isinstance(rec, dict) else rec_sp)
+            if r_lat is not None and r_lon is not None:
+                folium.CircleMarker(
+                    location=[r_lat, r_lon], radius=5, color="#e6550d", fill=True, fill_color="#fdae6b", fill_opacity=0.8,
+                    popup=f"<b>iNaturalist Research-Grade</b>: {comm_name} ({rec_sp})"
+                ).add_to(m)
+
+    if heatmap_layer != "None":
+        for s in dataset.candidate_sites:
+            lat, lon = site_lat_lon(s, center_lat, center_lon)
+            if heatmap_layer == "Epistemic Disagreement (QBC)":
+                qbc = getattr(s, "qbc_scores", [0.35])
+                val = float(np.mean(qbc)) if qbc is not None else 0.35
+                color = "#990000" if val > 0.4 else "#ff7f00"
+            else:
+                p_vec = getattr(s, "true_p", [0.3])
+                val = float(np.mean(p_vec)) if p_vec is not None else 0.3
+                color = "#006d2c" if val > 0.4 else "#74c476"
+            folium.CircleMarker(
+                location=[lat, lon], radius=max(3, int(val * 15)), color=color, fill=True, fill_color=color, fill_opacity=0.4,
+                popup=f"<b>{heatmap_layer}</b>: {val:.3f}"
+            ).add_to(m)
+
     if osrm_res.get("polyline_coords"):
         folium.PolyLine(
             osrm_res["polyline_coords"], color="#02818a", weight=5, opacity=0.85,
@@ -241,8 +314,22 @@ with tab_opportunity:
         index=1
     )
 
+    ebird_dicts = [
+        {"species": sp, "lat": getattr(r, "lat", 39.0), "lon": getattr(r, "lon", -94.5), "week": getattr(r, "week", 18), "detection": True, "event_id": getattr(r, "checklist_id", "eb1")}
+        for r in ebird_records for sp in (getattr(r, "species_list", []) if hasattr(r, "species_list") else r.get("species_list", []))
+    ]
+    inat_dicts = [
+        {"species": getattr(r, "species_name", "Unknown") if hasattr(r, "species_name") else r.get("species_name", "Unknown"), "lat": getattr(r, "lat", 39.0) if hasattr(r, "lat") else r.get("lat", 39.0), "lon": getattr(r, "lon", -94.5) if hasattr(r, "lon") else r.get("lon", -94.5), "week": getattr(r, "week", 18) if hasattr(r, "week") else r.get("week", 18), "event_id": f"inat_{getattr(r, 'id', 0) if hasattr(r, 'id') else r.get('id', 0)}"}
+        for r in inat_records
+    ]
+
+    species_evidence_records = build_species_evidence(
+        gbif_occurrences=gbif_records, ebird_detections=ebird_dicts, inat_occurrences=inat_dicts
+    )
+
     opp_cells = calculate_opportunity_surface(
-        dataset, species_id=search_sp, survey_week=survey_week_val, mode=search_mode_key, observer_profile=observer_profile
+        dataset, species_id=search_sp, survey_week=survey_week_val, mode=search_mode_key,
+        observer_profile=observer_profile, species_evidence=species_evidence_records
     )
 
     st.markdown(f"### 📍 Top Ranked Location Opportunity Cards ({len(opp_cells)} sites evaluated)")
@@ -258,7 +345,7 @@ with tab_opportunity:
 
     st.divider()
     st.subheader("🌿 Demonstration Richness-Debt Heuristic")
-    st.caption("Compares expected habitat species richness against effort-adjusted observed richness to identify under-sampled greenways.")
+    st.caption("Illustrative heuristic based on proxy canopy and greenness values; not effort-corrected.")
     debt_results = calculate_expected_richness_debt(dataset.candidate_sites, gbif_records)
     st.table(pd.DataFrame(debt_results)[["site_name", "expected_richness", "observed_richness", "richness_debt", "explanation"]])
 
@@ -278,11 +365,90 @@ with tab_opportunity:
 
 # --- TAB 3: DYNAMIC PHENOLOGY & SPECIES ANALYTICS ---
 with tab_species:
-    st.subheader("🦅 Focal Species Portfolio & Dynamic Weekly Species Weights")
-    
+    st.subheader("🦅 Focal Species Portfolio & Dynamic Weekly Phenology Analytics")
+    st.caption("Inspect species taxonomy, Wikipedia field photography, habitat preference, and seasonal annual abundance curves.")
+
+    selected_sp = st.selectbox("Select Focal Avian Species for Deep-Dive", options=dataset.species_names, index=0)
+    meta = get_enriched_species_metadata(selected_sp)
+    phen = get_species_phenology(selected_sp)
+
+    col_img, col_info = st.columns([1, 2])
+
+    with col_img:
+        if meta.photo_url:
+            st.image(meta.photo_url, caption=f"Photo: {meta.common_name} ({meta.scientific_name})", use_container_width=True)
+        else:
+            st.info(f"📸 Image preview: {meta.common_name}")
+
+    with col_info:
+        st.markdown(f"### {meta.common_name} (*{meta.scientific_name}*)")
+        
+        m_c1, m_c2, m_c3 = st.columns(3)
+        m_c1.metric("Guild Class", meta.guild_class)
+        m_c2.metric("Migratory Status", phen.migratory_status)
+        cur_abun = phen.weekly_abundance[min(51, max(0, survey_week_val - 1))]
+        m_c3.metric(f"Week {survey_week_val} Abundance", f"{cur_abun*100:.1f}%")
+
+        st.markdown(f"**Primary Habitat**: {meta.primary_habitat}")
+        st.markdown(f"**Field Description**: {meta.description}")
+        if meta.wikipedia_url:
+            st.markdown(f"📖 [View full species article on Wikipedia]({meta.wikipedia_url})")
+
+    st.divider()
+    st.subheader(f"📈 Annual Phenology & Relative Abundance Curve — {selected_sp}")
+    st.caption(f"Shows seasonal occupancy curve over 52 annual weeks. Vertical focus is current Target Survey Week: **Week {survey_week_val}** (Relative Abundance: {cur_abun:.4f}).")
+
+    weeks_arr = np.arange(1, 53)
+    phen_chart_df = pd.DataFrame({
+        "Week": weeks_arr,
+        "Relative Abundance": phen.weekly_abundance
+    })
+
+    base_line = alt.Chart(phen_chart_df).mark_line(color="#02818a", strokeWidth=3).encode(
+        x=alt.X("Week:Q", scale=alt.Scale(domain=[1, 52]), title="Annual Observation Week (1 - 52)"),
+        y=alt.Y("Relative Abundance:Q", scale=alt.Scale(domain=[0, 1.05]), title="Relative Occupancy / Abundance")
+    )
+
+    base_area = alt.Chart(phen_chart_df).mark_area(color="#02818a", opacity=0.15).encode(
+        x="Week:Q",
+        y="Relative Abundance:Q"
+    )
+
+    # Active Target Week Highlight Marker
+    target_point_df = pd.DataFrame({
+        "Week": [survey_week_val],
+        "Relative Abundance": [cur_abun],
+        "Label": [f"📍 Target Week {survey_week_val} ({cur_abun*100:.1f}%)"]
+    })
+
+    rule_line = alt.Chart(target_point_df).mark_rule(color="#e31a1c", strokeDash=[4, 4], strokeWidth=2).encode(
+        x="Week:Q"
+    )
+
+    point_marker = alt.Chart(target_point_df).mark_circle(color="#e31a1c", size=140).encode(
+        x="Week:Q",
+        y="Relative Abundance:Q",
+        tooltip=["Week", "Relative Abundance", "Label"]
+    )
+
+    text_annotation = alt.Chart(target_point_df).mark_text(
+        align="left", dx=10, dy=-12, color="#e31a1c", fontSize=13, fontWeight="bold"
+    ).encode(
+        x="Week:Q",
+        y="Relative Abundance:Q",
+        text="Label:N"
+    )
+
+    phen_altair_chart = (base_area + base_line + rule_line + point_marker + text_annotation).properties(
+        height=340
+    )
+    st.altair_chart(phen_altair_chart, use_container_width=True)
+
+    st.info(f"💡 **Peak Activity Weeks**: {', '.join([f'Week {w}' for w in phen.peak_weeks[:6]])}")
+
+    st.divider()
+    st.markdown(f"### 📅 Portfolio Active Weekly Utility Weights for Target Survey Week **{survey_week_val}**")
     computed_weights = get_weekly_species_weights(dataset.species_names, survey_week_val)
-    
-    st.markdown(f"### 📅 Active Weekly Utility Weights for Target Survey Week **{survey_week_val}**")
     weight_df = pd.DataFrame({
         "Species Name": dataset.species_names,
         "Dynamic Weekly Weight (w_{s,t})": [f"{w:.4f}" for w in computed_weights],
@@ -315,8 +481,14 @@ with tab_benchmark:
     st.subheader("⚔️ Policy Comparison: OVON vs. Raw Hotspot vs. Random")
 
     # Pass identical survey_week, lambda_redundancy, return_to_hub, and budget to all benchmark policies
-    rand_sol = build_random_route(dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min), seed=42)
-    hot_sol = build_hotspot_route(dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min))
+    rand_sol = build_random_route(
+        dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min),
+        lambda_redundancy=lambda_red, survey_week=survey_week_val, seed=42
+    )
+    hot_sol = build_hotspot_route(
+        dataset, start_site_id=start_site_idx, budget_minutes=float(budget_min),
+        lambda_redundancy=lambda_red, survey_week=survey_week_val
+    )
 
     bench_df = pd.DataFrame([
         {"Policy": "1. Random Feasible", "Total Stops": len(rand_sol.sites), "Total Time (min)": rand_sol.total_time_minutes, "Multi-Species Utility": rand_sol.utility},

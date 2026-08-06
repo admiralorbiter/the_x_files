@@ -195,7 +195,7 @@ def compute_set_utility(
             s, existing_observations, survey_week=survey_week, spatial_length_km=length_spatial
         )
         dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
-        dur_efficiency = 1.0 - math.exp(-0.12 * dur) if 'math' in globals() else 1.0 - np.exp(-0.12 * dur)
+        dur_efficiency = duration_efficiency_multiplier(dur)
         total_info += weighted_qbc[idx] * (1.0 - R_hist) * dur_efficiency
 
     n_sites = len(sites)

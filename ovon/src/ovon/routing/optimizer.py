@@ -1,11 +1,16 @@
 import copy
 import math
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional, Set
+from typing import List, Tuple, Dict, Optional, Set, Any, Protocol
 import numpy as np
 
 from ovon.synthetic.generator import CandidateSite, SyntheticDataset
 from ovon.utility.metrics import compute_set_utility, calculate_qbc_disagreement
+
+class SiteRewardProtocol(Protocol):
+    """Protocol for mode-specific site rewards evaluated dynamically over observation duration."""
+    def reward(self, site: Any, duration_minutes: float) -> float:
+        ...
 
 @dataclass(frozen=True)
 class RouteStop:
@@ -372,6 +377,8 @@ def build_random_route(
     start_site_id: int,
     budget_minutes: float,
     seed: int = 42,
+    lambda_redundancy: float = 0.5,
+    survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
@@ -408,7 +415,10 @@ def build_random_route(
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
     species_names = getattr(dataset, "species_names", None)
-    u = compute_set_utility(current_stops, dataset.existing_observations, species_names=species_names)
+    u = compute_set_utility(
+        current_stops, dataset.existing_observations,
+        species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+    )
 
     return RouteSolution(
         sites=current_stops,
@@ -425,6 +435,8 @@ def build_hotspot_route(
     dataset: SyntheticDataset,
     start_site_id: int,
     budget_minutes: float,
+    lambda_redundancy: float = 0.5,
+    survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0
 ) -> RouteSolution:
@@ -464,7 +476,10 @@ def build_hotspot_route(
         return_to_hub=return_to_hub, access_buffer_minutes=access_buffer_minutes
     )
     species_names = getattr(dataset, "species_names", None)
-    u = compute_set_utility(current_stops, dataset.existing_observations, species_names=species_names)
+    u = compute_set_utility(
+        current_stops, dataset.existing_observations,
+        species_names=species_names, lambda_redundancy=lambda_redundancy, survey_week=survey_week
+    )
 
     return RouteSolution(
         sites=current_stops,

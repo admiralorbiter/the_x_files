@@ -7,6 +7,8 @@ from ovon.data.phenology import get_species_phenology
 from ovon.data.evidence import SpeciesEvidence, aggregate_species_evidence
 from ovon.features.habitat_analog import HabitatAnalogSearch
 
+from ovon.utility.metrics import calculate_qbc_disagreement
+
 SEARCH_MODES = {
     "likely_encounter": "1. Likely Encounter (Maximum Detection Probability)",
     "expected_undocumented": "2. Expected but Undocumented (High Habitat Match + Low Survey Effort)",
@@ -41,6 +43,14 @@ class SpeciesOpportunityCell:
     opportunity_score: float
     search_mode: str
     explanation: str
+    is_simulation_only: bool = False
+
+def get_site_cell_id(site: Any) -> str:
+    """Safely map CandidateSite to cell identifier."""
+    cell_id = getattr(site, "cell_id", None)
+    if cell_id is not None:
+        return str(cell_id)
+    return f"cell_{site.site_id}"
 
 def calculate_opportunity_surface(
     dataset: Any,
@@ -53,65 +63,88 @@ def calculate_opportunity_surface(
     """
     Generate ranked SpeciesOpportunityCell surface across candidate sites for 1 of 5 search modes.
     Decouples ecological presence psi from conditional detectability p_detect|present.
+    Uses species-specific QBC disagreement, evidence deduplication, presence-only records, and candidate cell mapping.
     """
     phen = get_species_phenology(species_id)
     weekly_abundance = phen.weekly_abundance[min(51, max(0, survey_week - 1))]
 
-    # 1. Fit HabitatAnalogSearch using actual filtered species evidence if available
+    # 1. Fit HabitatAnalogSearch using presence records (including presence_only and photo_verified)
     analog_engine = HabitatAnalogSearch()
     
     occurrence_records = []
     if species_evidence:
-        occurrence_records = [
-            {"lat": r.lat, "lon": r.lon}
-            for r in species_evidence
-            if r.species_id == species_id and r.detection is True
-        ]
+        for r in species_evidence:
+            if r.species_id == species_id:
+                is_presence = (
+                    r.evidence_type in {"presence_only", "photo_verified_presence"}
+                    or (r.evidence_type == "complete_checklist_detection" and r.detection is True)
+                )
+                if is_presence:
+                    occurrence_records.append({
+                        "lat": r.lat, "lon": r.lon, "cell_id": r.cell_id, "evidence_type": r.evidence_type
+                    })
 
     if not occurrence_records:
-        # Fallback to candidate sites sample with background scaling
         occurrence_records = [{"habitat": s.habitat} for s in dataset.candidate_sites[:5]]
 
-    analog_engine.fit(species_id, occurrence_records, background_candidates=dataset.candidate_sites)
+    analog_engine.fit(
+        species_id, occurrence_records, background_candidates=dataset.candidate_sites
+    )
     analog_matches = analog_engine.predict_habitat_match(dataset.candidate_sites)
 
     meta = SPECIES_DETECTABILITY_CATALOG.get(species_id, {"detectability_class": "medium", "recommended_duration": 10, "cryptic_multiplier": 1.2})
     profile_multiplier = {"Beginner": 0.70, "Intermediate": 1.0, "Advanced": 1.30}.get(observer_profile, 1.0)
     cryptic_value = float(meta["cryptic_multiplier"])
 
+    species_names = getattr(dataset, "species_names", [])
+    target_sp_idx = species_names.index(species_id) if species_id in species_names else 0
+
     cells = []
     for idx, s in enumerate(dataset.candidate_sites):
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
-        cell_key = f"cell_{s.site_id}"
+        cell_key = get_site_cell_id(s)
         covs = getattr(s, "env_covariates", None)
         canopy = covs.tree_canopy_pct if covs else s.habitat[0]
 
         # 1. Ecological Presence psi(s, i, t) in [0, 1]
         psi = float(np.clip(weekly_abundance * analog_matches[idx] * (1.2 if canopy > 0.3 else 0.8), 0.01, 0.99))
 
-        # 2. Conditional Detectability given presence: p_detect_given_present = 1 - exp(-r * tau)
+        # 2. Conditional Detectability given presence
         dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
         p_detect_given_present = float(1.0 - math.exp(-0.08 * dur * profile_multiplier))
 
         # Total Encounter Probability P(encounter) = psi * p_detect_given_present
         p_encounter = float(psi * p_detect_given_present)
 
-        # 3. Model Disagreement & Epistemic Uncertainty from QBC or Bootstrap Matrix
+        # 3. Model Disagreement & Epistemic Uncertainty from species-specific QBC or Bootstrap Matrix
         qbc_scores = getattr(s, "qbc_scores", None)
         if qbc_scores is not None and len(qbc_scores) > 0:
-            qbc_disagreement = float(np.mean(qbc_scores))
+            if target_sp_idx < len(qbc_scores):
+                qbc_disagreement = float(qbc_scores[target_sp_idx])
+            else:
+                qbc_disagreement = float(np.mean(qbc_scores))
         else:
-            qbc_disagreement = 0.35
+            bootstrap = getattr(s, "bootstrap_predictions", None)
+            if bootstrap is not None and getattr(bootstrap, "size", 0) > 0:
+                qbc_arr = calculate_qbc_disagreement(bootstrap)
+                if target_sp_idx < len(qbc_arr):
+                    qbc_disagreement = float(qbc_arr[target_sp_idx])
+                else:
+                    qbc_disagreement = float(np.mean(qbc_arr))
+            else:
+                qbc_disagreement = 0.35
 
         entropy = float(-psi * math.log2(psi) - (1.0 - psi) * math.log2(1.0 - psi))
 
         # 4. Evidence Aggregation & Checklist Effort Coverage C(s, i, t)
+        is_sim_only = species_evidence is None
         if species_evidence:
             ev_agg = aggregate_species_evidence(species_evidence, cell_id=cell_key, species_id=species_id, target_week=survey_week)
             n_checklists = ev_agg["n_checklists"]
             coverage_C = ev_agg["coverage_score"]
         else:
-            n_checklists = getattr(s, "n_checklists", 1 if idx % 3 == 0 else 0)
+            # Deterministic coverage fallback based on candidate site attribute or zero
+            n_checklists = getattr(s, "n_checklists", 0)
             coverage_C = float(1.0 - math.exp(-0.35 * n_checklists))
 
         # 5. Compute Mode-Specific Opportunity Score
@@ -120,7 +153,7 @@ def calculate_opportunity_surface(
             expl = f"High expected encounter rate ({p_encounter*100:.1f}%) during Week {survey_week}."
         elif mode == "expected_undocumented":
             score = psi * (1.0 - coverage_C)
-            expl = f"High habitat match ({analog_matches[idx]*100:.0f}%) with only {n_checklists} prior complete checklists."
+            expl = f"High habitat match ({analog_matches[idx]*100:.0f}%) with {n_checklists} prior complete checklists."
         elif mode == "uncertainty_frontier":
             score = entropy * qbc_disagreement * (1.0 - coverage_C)
             expl = f"High model disagreement ({qbc_disagreement:.3f}) and entropy ({entropy:.3f})."
@@ -130,10 +163,13 @@ def calculate_opportunity_surface(
         elif mode == "range_edge_surprise":
             range_edge = float(getattr(s, "range_edge_index", 0.65))
             score = qbc_disagreement * range_edge * analog_matches[idx]
-            expl = f"Range-edge exploratory site with high potential detection impact."
+            expl = f"Exploratory site with high range-edge potential ({range_edge:.2f})."
         else:
             score = psi * (1.0 - coverage_C)
             expl = f"Expected undocumented opportunity score: {score:.4f}."
+
+        if is_sim_only and mode in {"expected_undocumented", "uncertainty_frontier", "range_edge_surprise"}:
+            expl += " [Simulation Scaffold]"
 
         cells.append(SpeciesOpportunityCell(
             species_id=species_id,
@@ -148,7 +184,8 @@ def calculate_opportunity_surface(
             model_disagreement=qbc_disagreement,
             opportunity_score=float(score),
             search_mode=mode,
-            explanation=expl
+            explanation=expl,
+            is_simulation_only=is_sim_only
         ))
 
     return sorted(cells, key=lambda c: c.opportunity_score, reverse=True)
