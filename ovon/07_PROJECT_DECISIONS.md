@@ -1,279 +1,76 @@
-# Project Decisions and Open Questions
+# Project Decisions and Architecture Decision Records (ADRs)
 
-This document records provisional research and architecture decisions. Decisions can change, but changes should be explicit and traceable.
-
-## ADR-001: Use encounter rate as the retrospective MVP target
-
-**Status:** Provisionally accepted
-
-**Decision:** Model the probability of detecting a species on a standardized complete checklist.
-
-**Rationale:**
-
-- historical eBird records are not a controlled repeat-visit design;
-- absolute detection and occupancy are generally not separately identified from opportunistic visits alone;
-- Cornell’s best-practices workflow supports encounter-rate estimation;
-- encounter models are computationally manageable.
-
-**Consequence:** Do not label retrospective predictions true occupancy.
-
-**Future:** Use occupancy models for structured repeated field sites.
+This document records research, mathematical, and software architecture decisions for the OVON project.
 
 ---
 
-## ADR-002: Use a Kansas City regional pilot
+## Architecture Decision Records (ADRs)
 
-**Status:** Provisionally accepted
+### ADR-001: Use encounter rate as the retrospective MVP target
+**Status:** Accepted  
+**Decision:** Model the probability of detecting a species on a standardized complete checklist ($y \sim \operatorname{Bernoulli}(\pi)$).  
+**Rationale:** Standardized complete checklist encounter rates are computationally manageable and align with Cornell eBird best practices.
 
-**Decision:** Begin with a 100 km radius around Kansas City and buffer the ecological fitting area.
+### ADR-002: Use a Kansas City regional pilot
+**Status:** Accepted  
+**Decision:** Centered on Greater Kansas City (`39.0997, -94.5786`) with a 30–50 km radius crossing Missouri and Kansas.
 
-**Rationale:**
+### ADR-003: Freeze historical outcomes at 2025-12-31
+**Status:** Accepted  
+**Decision:** Primary benchmark uses complete years 2021–2025.
 
-- local application;
-- manageable computation;
-- diverse habitat and urbanization;
-- cross-state context;
-- feasible field routes.
+### ADR-004: Use complete stationary and traveling checklists
+**Status:** Accepted  
+**Decision:** Infer non-detections only from complete checklists.
 
-**Open item:** Freeze the center coordinate and boundary after preliminary coverage review.
+### ADR-005: Separate scientific utility from volunteer utility
+**Status:** Accepted  
+**Decision:** Report scientific information gain, route travel burden, and observer experience level separately.
 
----
+### ADR-006: Bootstrap disagreement plus spatial-habitat redundancy
+**Status:** Accepted  
+**Decision:** Compute set utility $U(A)$ combining QBC disagreement $U_{\text{QBC}}$ and spatial-habitat redundancy kernels $k(a, b)$ instead of full Bayesian posterior sampling.
 
-## ADR-003: Freeze historical outcomes at 2025-12-31
+### ADR-007: Standardized 10-minute stationary checklists per stop
+**Status:** Accepted  
+**Decision:** Recommended field protocol consists of 3–5 fixed candidate stops, each with a 10-minute stationary complete checklist.
 
-**Status:** Accepted
+### ADR-008: No public individual observer ranking
+**Status:** Accepted  
+**Decision:** Observer skill levels are used for protocol guidance only and are never publicly ranked or gamified.
 
-**Decision:** Use complete years 2021–2025 for the primary benchmark.
+### ADR-010: Access, safety, and sensitive-species rules are hard constraints
+**Status:** Accepted  
+**Decision:** Legal public access and safety are hard constraints. Exclude sensitive locations from public outputs.
 
-**Rationale:** Avoid partial-year bias and enable clean rolling future-year evaluation.
+### ADR-016: Guild-based priority weighting for seasonal migratory birds
+**Status:** Accepted  
+**Date:** 2026-08-05  
+**Decision:** Assign 2.5× higher optimization weight ($w_s$) to seasonal migratory species (*Indigo Bunting*, *Yellow-rumped Warbler*, *Belted Kingfisher*, *Bald Eagle*) compared to year-round residents (*Cardinal*, *Blue Jay*, *Robin*).  
+**Rationale:** Capturing spring and autumn migration temporal dynamics generates higher scientific marginal value.
 
-**Consequence:** Newer records may support prospective or external checks but should not silently enter the frozen benchmark.
+### ADR-017: Candidate POI expansion to public fountains, plazas, and riverfronts
+**Status:** Accepted  
+**Date:** 2026-08-05  
+**Decision:** Expand candidate observation sites beyond standard public parks to include famous Kansas City fountains (J.C. Nichols Memorial Fountain, Firefighters Fountain, Loose Park Rose Garden Fountain), public plazas (Union Station Plaza, Mill Creek Park), and riverfront corridors (Berkley Riverfront Park, English Landing Park).  
+**Rationale:** Increases spatial coverage across urban and riparian habitats.
 
----
+### ADR-018: OSRM real road routing & turn-by-turn directions
+**Status:** Accepted  
+**Date:** 2026-08-05  
+**Decision:** Use the Open Source Routing Machine (OSRM) API to compute driving travel times, render road-snapped driving polylines on Leaflet maps (snapping to highways I-70, I-435, US-71), and generate turn-by-turn volunteer directions.  
+**Rationale:** Replaces straight-line approximations with realistic driving paths and actionable volunteer instructions.
 
-## ADR-004: Use complete stationary and traveling checklists
-
-**Status:** Accepted
-
-**Decision:** Infer focal-species non-detections only from complete checklists.
-
-**Sensitivity:** Compare with stationary-only and short-distance traveling subsets.
-
----
-
-## ADR-005: Separate scientific utility from volunteer utility
-
-**Status:** Accepted
-
-**Decision:** Report scientific information, route burden, expected completion, accessibility, and participant learning or interest separately.
-
-**Rationale:** These objectives can conflict and should not be hidden inside one opaque score.
-
----
-
-## ADR-006: Start with an approximate transparent information utility
-
-**Status:** Accepted
-
-**Decision:** The MVP will use bootstrap disagreement plus ecological–spatiotemporal redundancy instead of exact Bayesian expected information gain.
-
-**Rationale:**
-
-- lower compute;
-- easier debugging;
-- easier explanation;
-- direct ablations;
-- avoids repeated posterior updates for every hypothetical outcome.
-
-**Benchmark:** Compare with GP mutual information or D-optimal design on smaller problems.
+### ADR-019: Form-based widget grouping for Streamlit UI performance
+**Status:** Accepted  
+**Date:** 2026-08-05  
+**Decision:** Group optimization controls inside `st.form` with a single submission button and cache route solutions (`@st.cache_data`).  
+**Rationale:** Eliminates map iframe re-rendering and flickering when adjusting sliders or dropdowns.
 
 ---
 
-## ADR-007: Use routes of short stationary checklists in field work
-
-**Status:** Recommended; ecological review required
-
-**Decision:** Each route contains several fixed 10–15 minute stationary stops, with one complete checklist per stop.
-
-**Rationale:** Better spatial precision, repeatability, occupancy extension, and beginner instructions.
-
-**Alternative:** One long traveling checklist.
-
-**Reason not preferred:** Ambiguous spatial support and weaker repeat-visit interpretation.
-
----
-
-## ADR-008: No public individual observer ranking
-
-**Status:** Accepted
-
-**Decision:** Observer effects may be modeled privately for ecological inference, but individual skill scores will not be published or gamified.
-
----
-
-## ADR-009: Status and Trends are validation inputs, not default application layers
-
-**Status:** Accepted
-
-**Decision:** Use Status and Trends only under current terms, primarily for research comparison or permitted simulation.
-
-**Rationale:** Current terms restrict web and decision-support use without prior consent.
-
----
-
-## ADR-010: Access, safety, and sensitive-species rules are hard constraints
-
-**Status:** Accepted
-
-**Decision:** The optimizer cannot trade legal access, field safety, or species protection for higher expected information.
-
----
-
-## ADR-011: Use a rule-selected multi-species portfolio
-
-**Status:** Provisionally accepted
-
-**Decision:** Begin with approximately 12 species spanning common residents, migrants, habitat specialists, and different detection difficulty.
-
-**Open item:** Freeze thresholds after data audit and ecological review.
-
----
-
-## ADR-012: Evaluate adaptive sampling in three modes
-
-**Status:** Accepted
-
-**Decision:** Use:
-
-1. held-out real checklist replay;
-2. cell-week candidate/reference splits;
-3. semi-synthetic known truth.
-
-**Rationale:** No single retrospective design supplies all counterfactual outcomes.
-
----
-
-## ADR-013: Log recommendation policies
-
-**Status:** Accepted
-
-**Decision:** Store model version, utility version, candidate set, routes offered, participant choice, and completion.
-
-**Rationale:** Adaptive recommendations alter the future observation process.
-
----
-
-## ADR-014: Maintain a low-compute baseline permanently
-
-**Status:** Accepted
-
-**Decision:** Every major experiment must run in a workstation-scale development configuration.
-
-**Rationale:** The contribution should not depend on costly neural inference.
-
----
-
-## ADR-015: Treat simple methods as serious competitors
-
-**Status:** Accepted
-
-**Decision:** Environmental stratification, equal-area sampling, and least-sampled routing are primary baselines, not straw men.
-
-**Rationale:** A result showing that simple sampling captures most of the value would itself be useful.
-
----
-
-# Open questions
-
-## Q1. What is the first ecological target?
-
-Candidates:
-
-1. year-round encounter maps;
-2. migration-week encounter maps;
-3. habitat-boundary uncertainty;
-4. permanent-monitoring network design.
-
-**Recommendation:** Begin with migration-week encounter maps for a mixed portfolio and use residents as a stability baseline.
-
-## Q2. What spatial representation is best?
-
-Candidates:
-
-- 1 km grid;
-- 3 km grid;
-- 5 km grid;
-- H3 cells;
-- fixed public sites only.
-
-**Recommendation:** 3 km equal-area baseline, multiscale habitat covariates, and fixed sites for field work.
-
-## Q3. How should species be weighted?
-
-Candidates:
-
-- equal;
-- equal within guild;
-- conservation priority;
-- management decision value;
-- inverse prevalence.
-
-**Recommendation:** Equal within guild for MVP, with sensitivity analyses. Avoid unstable inverse-prevalence weights for rare species.
-
-## Q4. Should observer ID enter the first model?
-
-**Recommendation:** Not required for the first atlas. Add private observer-level sensitivity analyses and prospective self-reported profiles later.
-
-## Q5. What is the practical route origin?
-
-Candidates:
-
-- fixed community hubs;
-- coarse participant zone;
-- user-selected origin;
-- park-and-ride locations.
-
-**Recommendation:** Fixed hubs for research benchmarks and participant-selected origins for later deployment. Never store home addresses.
-
-## Q6. Should every kind of uncertainty be rewarded?
-
-**Recommendation:** No. Compare predictive entropy, model disagreement, and decision value. Flag extrapolation rather than automatically treating it as useful.
-
-## Q7. How many volunteers are required?
-
-The first field effort is a feasibility pilot. Use observed acceptance, completion, and within-participant variance to design a later powered study rather than inventing a precise confirmatory sample now.
-
-## Q8. What counts as a successful contribution?
-
-At least one of:
-
-- a validated redundancy metric;
-- an adaptive policy outperforming strong baselines;
-- a route algorithm with a guarantee or compelling empirical performance;
-- a quantified price of human feasibility;
-- an informative field-pilot result, including a negative result.
-
-## Q9. Should the public product recommend exact sites?
-
-**Recommendation:** Not initially. Start with private research routes and public aggregate maps. Exact public recommendations require access, safety, licensing, and sensitive-species review.
-
-## Decision template
-
-```markdown
-## ADR-XXX: Decision title
-
-**Date:** YYYY-MM-DD  
-**Status:** Proposed / Accepted / Superseded / Rejected
-
-**Context:**
-
-**Decision:**
-
-**Alternatives:**
-
-**Evidence:**
-
-**Consequences:**
-
-**Revisit trigger:**
-```
+## Open Questions & Statuses
+
+- **Q1. Ecological Target:** Migration-week encounter maps for a mixed portfolio (Implemented).
+- **Q2. Spatial Representation:** 3 km equal-area square grid centered on Kansas City (Implemented).
+- **Q3. Rarity vs. Uncertainty:** Epistemic uncertainty prioritized via QBC; raw vagrant rarity excluded from MVP to prevent chase behavior (Implemented).

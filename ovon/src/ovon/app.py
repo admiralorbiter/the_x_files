@@ -13,12 +13,14 @@ from ovon.data.fetch_public import build_kc_real_dataset, fetch_gbif_kc_birds
 from ovon.synthetic.generator import generate_synthetic_dataset
 from ovon.features.grid import EqualAreaGrid
 from ovon.features.redundancy import RedundancyAtlas
+from ovon.models.encounter import CalibratedTreeEncounterModel, SpatialBlockCV, BootstrapEnsembleUncertainty, extract_feature_vector
 from ovon.routing.optimizer import (
     build_greedy_route,
     refine_route_local_search,
     build_random_route,
     build_hotspot_route
 )
+from ovon.routing.osrm import fetch_osrm_multistop_route
 
 st.set_page_config(
     page_title="OVON - Optimal Volunteer Observation Network",
@@ -38,7 +40,7 @@ def get_cached_gbif_records():
 gbif_records = get_cached_gbif_records()
 all_gbif_species = sorted(list(set([r["species"] for r in gbif_records if r.get("species")])))
 
-# Sidebar Configuration with Form to prevent map flicker on every slider move
+# Sidebar Configuration with Form to prevent map flicker
 st.sidebar.header("⚙️ Optimization Parameters")
 
 with st.sidebar.form(key="opt_form"):
@@ -65,7 +67,7 @@ else:
         return generate_synthetic_dataset(n_sites=40, seed=42)
     dataset = load_synthetic_dataset()
 
-# Park Selection for Starting Node (outside form so user can select hub smoothly)
+# Park Selection for Starting Node
 site_names = [getattr(s, "park_name", f"Candidate Site {s.site_id}") for s in dataset.candidate_sites]
 start_site_idx = st.sidebar.selectbox("Starting Location / Hub", options=range(len(site_names)), format_func=lambda i: site_names[i])
 
@@ -78,9 +80,25 @@ def get_optimized_route(start_idx, budget, lam, is_real):
 
 ovon_sol = get_optimized_route(start_site_idx, budget_min, lambda_red, use_real_kc)
 
+# Fetch OSRM Road Driving Polyline & Turn-by-Turn Steps
+stop_coords = []
+center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0997)
+center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5786)
+
+for s in ovon_sol.sites:
+    lat = getattr(s, "lat", center_lat + (s.y / 111.0))
+    lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
+    stop_coords.append((lat, lon))
+
+@st.cache_data
+def get_osrm_driving_details(coords):
+    return fetch_osrm_multistop_route(coords)
+
+osrm_res = get_osrm_driving_details(stop_coords)
+
 # Tabs Layout
 tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
-    "🗺️ Route Map & Spatial Layers",
+    "🗺️ Route Map & OSRM Road Layer",
     "🦅 Species Analytics & GBIF Records",
     "📊 Redundancy Atlas & Spatial Grid",
     "🤖 Model Calibration & Out-of-Fold CV",
@@ -91,21 +109,17 @@ tab_map, tab_species, tab_atlas, tab_models, tab_benchmark = st.tabs([
 SPECIES_COLORS = ["#e31a1c", "#1f78b4", "#33a02c", "#ff7f00", "#6a3d9a", "#a6cee3", "#b2df8a", "#fdbf6f"]
 species_color_map = {sp: SPECIES_COLORS[idx % len(SPECIES_COLORS)] for idx, sp in enumerate(all_gbif_species)}
 
-# --- TAB 1: ROUTE MAP & SPATIAL LAYERS ---
+# --- TAB 1: ROUTE MAP & OSRM ROAD LAYER ---
 with tab_map:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Route Time", f"{ovon_sol.total_time_minutes:.1f} min", f"Budget: {budget_min} min")
-    col2.metric("Driving Travel Time", f"{ovon_sol.total_travel_minutes:.1f} min")
+    col2.metric("Driving Travel Time", f"{osrm_res['duration_min']:.1f} min" if not osrm_res['is_fallback'] else f"{ovon_sol.total_travel_minutes:.1f} min", f"Road Dist: {osrm_res['distance_km']:.1f} km")
     col3.metric("Stationary Survey Time", f"{ovon_sol.total_observation_minutes:.1f} min", f"{len(ovon_sol.sites)} Stops")
     col4.metric("Multi-Species Utility", f"{ovon_sol.utility:.4f}", f"Profile: {observer_profile}")
 
-    # Map Rendering
-    center_lat = getattr(dataset.candidate_sites[0], "lat", 39.0997)
-    center_lon = getattr(dataset.candidate_sites[0], "lon", -94.5786)
-
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="OpenStreetMap")
 
-    # Grid Heatmap Layer Overlay (sampled for fast performance)
+    # Grid Heatmap Layer Overlay
     if heatmap_layer != "None":
         grid = EqualAreaGrid(radius_km=25.0, resolution_km=8.0)
         rng_hm = np.random.default_rng(42)
@@ -171,12 +185,10 @@ with tab_map:
         ).add_to(m)
 
     # Plot selected route stops in green with sequence badges
-    route_coords = []
     for idx, s in enumerate(ovon_sol.sites):
         lat = getattr(s, "lat", center_lat + (s.y / 111.0))
         lon = getattr(s, "lon", center_lon + (s.x / (111.0 * 0.77)))
         park_name = getattr(s, "park_name", f"Site {s.site_id}")
-        route_coords.append([lat, lon])
 
         folium.Marker(
             location=[lat, lon],
@@ -184,9 +196,15 @@ with tab_map:
             icon=folium.Icon(color="green" if idx > 0 else "blue", icon="info-sign")
         ).add_to(m)
 
-    # Draw polyline connecting stops
-    if len(route_coords) > 1:
-        folium.PolyLine(route_coords, color="#2b8cbe", weight=4, opacity=0.9).add_to(m)
+    # Draw OSRM exact road driving polylines (snapping to highways and streets)
+    if osrm_res.get("polyline_coords"):
+        folium.PolyLine(
+            osrm_res["polyline_coords"],
+            color="#02818a",
+            weight=5,
+            opacity=0.85,
+            popup=f"OSRM Driving Route ({osrm_res['distance_km']:.1f} km)"
+        ).add_to(m)
 
     if HAS_STREAMLIT_FOLIUM:
         st_folium(m, width=1200, height=500, returned_objects=[])
@@ -214,6 +232,14 @@ with tab_map:
             "Survey Duration": f"{s.observation_minutes} min"
         })
     st.table(pd.DataFrame(itinerary_data))
+
+    # Turn-by-Turn Driving Directions Expander
+    with st.expander("🚗 Turn-by-Turn Volunteer Driving Directions (OSRM Road Network)", expanded=False):
+        if osrm_res.get("steps"):
+            for step_text in osrm_res["steps"]:
+                st.write(step_text)
+        else:
+            st.write("Driving directions loaded.")
 
 # --- TAB 2: SPECIES ANALYTICS & GBIF RECORDS ---
 with tab_species:
