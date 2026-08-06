@@ -38,7 +38,7 @@ from ovon.routing.optimizer import (
     site_lat_lon
 )
 from ovon.routing.osrm import fetch_osrm_multistop_route
-from ovon.data.species_enrichment import get_enriched_species_metadata
+from ovon.data.species_enrichment import get_enriched_species_metadata, get_canonical_taxon, TaxonRef
 
 st.set_page_config(
     page_title="OVON - Optimal Volunteer Observation Network",
@@ -65,7 +65,7 @@ show_gbif_layer = st.sidebar.checkbox("Overlay GBIF Species Sightings on Map", v
 show_ebird_layer = st.sidebar.checkbox("Overlay eBird Recent Sightings on Map", value=True)
 show_inat_layer = st.sidebar.checkbox("Overlay iNaturalist Research-Grade Sightings on Map", value=True)
 
-CACHE_VERSION = "v10_multisource_map_fix"
+CACHE_VERSION = "v12_gbif_dataset_expansion"
 
 @st.cache_data(ttl=3600)
 def load_cached_gbif_records(cache_ver: str = CACHE_VERSION):
@@ -215,8 +215,11 @@ with tab_map:
     if show_gbif_layer and gbif_records:
         for rec in gbif_records:
             rec_sp = rec.get("species") if isinstance(rec, dict) else getattr(rec, "species", None)
-            if selected_species_filter != "All Species" and rec_sp != selected_species_filter:
-                continue
+            rec_taxon_id = get_canonical_taxon(rec_sp).taxon_id if rec_sp else None
+            if selected_species_filter != "All Species":
+                target_tx_id = get_canonical_taxon(selected_species_filter).taxon_id
+                if rec_taxon_id != target_tx_id:
+                    continue
             r_lat = rec.get("lat") if isinstance(rec, dict) else getattr(rec, "lat", None)
             r_lon = rec.get("lon") if isinstance(rec, dict) else getattr(rec, "lon", None)
             if r_lat is not None and r_lon is not None:
@@ -232,18 +235,28 @@ with tab_map:
             r_lon = getattr(rec, "lon", None) if hasattr(rec, "lon") else (rec.get("lon") if isinstance(rec, dict) else None)
             sp_list = getattr(rec, "species_list", []) if hasattr(rec, "species_list") else (rec.get("species_list", []) if isinstance(rec, dict) else [])
             loc_name = getattr(rec, "loc_name", "eBird Location") if hasattr(rec, "loc_name") else (rec.get("loc_name", "eBird Location") if isinstance(rec, dict) else "eBird Location")
+            
+            if selected_species_filter != "All Species":
+                target_tx_id = get_canonical_taxon(selected_species_filter).taxon_id
+                list_tx_ids = [get_canonical_taxon(s).taxon_id for s in sp_list]
+                if target_tx_id not in list_tx_ids:
+                    continue
+
             if r_lat is not None and r_lon is not None:
                 folium.Marker(
                     location=[r_lat, r_lon],
-                    popup=f"<b>eBird Recent Checklist</b>: {loc_name}<br>Species count: {len(sp_list)}",
+                    popup=f"<b>eBird Recent Occurrence</b>: {loc_name}<br>Species count: {len(sp_list)}",
                     icon=folium.Icon(color="purple", icon="flag")
                 ).add_to(m)
 
     if show_inat_layer and inat_records:
         for rec in inat_records:
             rec_sp = getattr(rec, "species_name", None) if hasattr(rec, "species_name") else (rec.get("species_name") if isinstance(rec, dict) else None)
-            if selected_species_filter != "All Species" and rec_sp != selected_species_filter:
-                continue
+            rec_taxon_id = get_canonical_taxon(rec_sp).taxon_id if rec_sp else None
+            if selected_species_filter != "All Species":
+                target_tx_id = get_canonical_taxon(selected_species_filter).taxon_id
+                if rec_taxon_id != target_tx_id:
+                    continue
             r_lat = getattr(rec, "lat", None) if hasattr(rec, "lat") else (rec.get("lat") if isinstance(rec, dict) else None)
             r_lon = getattr(rec, "lon", None) if hasattr(rec, "lon") else (rec.get("lon") if isinstance(rec, dict) else None)
             comm_name = getattr(rec, "common_name", rec_sp) if hasattr(rec, "common_name") else (rec.get("common_name", rec_sp) if isinstance(rec, dict) else rec_sp)

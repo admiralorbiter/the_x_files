@@ -69,7 +69,9 @@ def test_build_species_evidence_adapter():
     records = build_species_evidence(gbif_occurrences=gbif, ebird_detections=ebird, inat_occurrences=inat)
     assert len(records) == 3
     sources = {r.source for r in records}
-    assert sources == {"GBIF", "eBird", "iNaturalist"}
+    assert "GBIF" in sources
+    assert any("eBird" in s for s in sources)
+    assert "iNaturalist" in sources
 
 def test_opportunity_surface_with_species_evidence():
     """Verify calculate_opportunity_surface integrates real SpeciesEvidence."""
@@ -121,3 +123,63 @@ def test_application_smoke_all_modes():
     for ds in [ds_urban, ds_real, ds_synth]:
         cells = calculate_opportunity_surface(ds, species_id=ds.species_names[0], survey_week=18)
         assert len(cells) == len(ds.candidate_sites)
+
+def test_ebird_recent_occurrences_are_presence_only():
+    """Verify eBird recent occurrence endpoint records are classified as presence_only (not complete checklist)."""
+    ebird = [{"species": "Passerina cyanea", "lat": 39.1, "lon": -94.5, "obsDt": "2024-05-18", "detection": True, "event_id": "eb1"}]
+    records = build_species_evidence(ebird_detections=ebird)
+    assert len(records) == 1
+    assert records[0].evidence_type == "presence_only"
+    assert records[0].source == "eBird Recent Occurrence"
+
+def test_taxon_canonicalization_resolution():
+    """Verify TaxonRef resolves common names and scientific names to identical canonical taxon_ids."""
+    from ovon.data.species_enrichment import get_canonical_taxon
+    tx1 = get_canonical_taxon("Indigo Bunting")
+    tx2 = get_canonical_taxon("Passerina cyanea")
+    assert tx1.taxon_id == tx2.taxon_id == "passerina_cyanea"
+
+    ev1 = SpeciesEvidence(
+        event_id="e1", species_id="Indigo Bunting", cell_id="cell_0",
+        observation_date=date.today(), week=18, source="GBIF",
+        evidence_type="presence_only", taxon_id=tx1.taxon_id
+    )
+    agg1 = aggregate_species_evidence([ev1], cell_id="cell_0", species_id="Passerina cyanea", target_week=18)
+    assert agg1["recent_occurrences"] == 1
+
+def test_spatial_cell_assignment_with_grid():
+    """Verify spatial cell assignment uses grid.assign_point(lat, lon) without artificial fallbacks."""
+    from ovon.features.grid import EqualAreaGrid
+    grid = EqualAreaGrid()
+    gbif = [{"species": "Cardinalis cardinalis", "lat": 39.05, "lon": -94.55, "event_date": "2024-05-18"}]
+    records = build_species_evidence(gbif_occurrences=gbif, grid=grid)
+    assert len(records) == 1
+    assert records[0].cell_id.startswith("cell_")
+    assert records[0].week == 20
+
+def test_parse_source_date_and_week():
+    """Verify date parsing correctly derives annual ISO week."""
+    from ovon.data.evidence import parse_source_date
+    d, w = parse_source_date("2024-05-02")
+    assert d == date(2024, 5, 2)
+    assert w == 18
+
+def test_multi_dimensional_provenance():
+    """Verify opportunity surface output tracks multi-dimensional provenance and result_status."""
+    ds = generate_synthetic_dataset(n_sites=5, seed=42)
+    cells = calculate_opportunity_surface(ds, species_id=ds.species_names[0], survey_week=18)
+    assert cells[0].result_status == "SIMULATED_DEMO"
+    assert cells[0].evidence_provenance == "synthetic"
+    assert cells[0].prediction_provenance == "provisional_prior"
+    assert cells[0].is_simulation_only is True
+
+def test_dynamic_reward_protocol_in_optimizer():
+    """Verify optimizer accepts and evaluates dynamic SiteRewardProtocol implementations."""
+    from ovon.routing.optimizer import build_greedy_route
+    class DummyReward:
+        def reward(self, site, duration_minutes):
+            return 2.5 * float(duration_minutes)
+
+    ds = generate_synthetic_dataset(n_sites=5, seed=42)
+    sol = build_greedy_route(ds, start_site_id=0, budget_minutes=60, reward_protocol=DummyReward())
+    assert sol.utility > 0

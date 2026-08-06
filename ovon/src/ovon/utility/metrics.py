@@ -149,43 +149,43 @@ def calculate_site_redundancy_to_history(
 def compute_set_utility(
     sites: List[CandidateSite],
     existing_observations: List[Any],
-    lambda_redundancy: float = 0.5,
     species_names: Optional[List[str]] = None,
+    lambda_redundancy: float = 0.5,
     survey_week: int = 18,
-    length_spatial: float = 10.0,
-    opportunity_surface: Optional[Dict[int, float]] = None
+    opportunity_surface: Optional[Dict[int, float]] = None,
+    reward_protocol: Optional[Any] = None,
+    length_spatial: float = 2.0
 ) -> float:
     """
-    Compute heuristic normalized multi-species information set utility U(A).
-    Supports weighting by species opportunity surface scores if provided.
+    Compute overall route utility combining epistemic info gain, duration efficiency,
+    and spatial/temporal redundancy penalty. Accepts dynamic reward_protocol or static opportunity_surface.
     """
     if not sites:
         return 0.0
 
     from ovon.data.phenology import get_weekly_species_weights
     
-    if species_names:
-        weights = get_weekly_species_weights(species_names, survey_week)
-    else:
-        qbc_0 = getattr(sites[0], "qbc_scores", None)
-        n_sp = len(qbc_0) if qbc_0 is not None else 3
-        weights = [1.0 / max(1, n_sp)] * n_sp
+    weights = get_weekly_species_weights(species_names, survey_week)
 
     weighted_qbc = []
     for s in sites:
-        qbc = getattr(s, "qbc_scores", None)
-        if qbc is None or np.all(np.array(qbc) == 0):
-            bootstrap = getattr(s, "bootstrap_predictions", None)
-            if bootstrap is not None and getattr(bootstrap, "size", 0) > 0:
-                qbc = calculate_qbc_disagreement(bootstrap)
+        if reward_protocol is not None and hasattr(reward_protocol, "reward"):
+            dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
+            w_qbc = float(reward_protocol.reward(s, dur))
+        else:
+            qbc_scores = getattr(s, "qbc_scores", None)
+            if qbc_scores is not None and len(qbc_scores) > 0:
+                qbc = qbc_scores
+            elif getattr(s, "bootstrap_predictions", None) is not None and getattr(s, "bootstrap_predictions").size > 0:
+                qbc = calculate_qbc_disagreement(s.bootstrap_predictions)
             else:
                 qbc = np.zeros(len(weights))
 
-        min_len = min(len(weights), len(qbc))
-        w_qbc = np.sum(np.array(weights)[:min_len] * np.array(qbc)[:min_len])
+            min_len = min(len(weights), len(qbc))
+            w_qbc = float(np.sum(np.array(weights)[:min_len] * np.array(qbc)[:min_len]))
 
-        if opportunity_surface is not None and s.site_id in opportunity_surface:
-            w_qbc = w_qbc * opportunity_surface[s.site_id]
+            if opportunity_surface is not None and s.site_id in opportunity_surface:
+                w_qbc = w_qbc * opportunity_surface[s.site_id]
 
         weighted_qbc.append(w_qbc)
 
@@ -194,9 +194,12 @@ def compute_set_utility(
         R_hist = calculate_site_redundancy_to_history(
             s, existing_observations, survey_week=survey_week, spatial_length_km=length_spatial
         )
-        dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
-        dur_efficiency = duration_efficiency_multiplier(dur)
-        total_info += weighted_qbc[idx] * (1.0 - R_hist) * dur_efficiency
+        if reward_protocol is not None and hasattr(reward_protocol, "reward"):
+            total_info += weighted_qbc[idx] * (1.0 - R_hist)
+        else:
+            dur = float(getattr(s, "allocated_observation_minutes", getattr(s, "observation_minutes", 10)))
+            dur_efficiency = duration_efficiency_multiplier(dur)
+            total_info += weighted_qbc[idx] * (1.0 - R_hist) * dur_efficiency
 
     n_sites = len(sites)
     if n_sites <= 1:

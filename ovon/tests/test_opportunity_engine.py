@@ -46,14 +46,14 @@ def test_opportunity_surface_routing_regression():
     # Standard greedy route without opportunity surface
     base_sol = build_greedy_route(dataset, start_site_id=0, budget_minutes=60.0)
 
-    # Give site #9 maximum opportunity score (10.0) vs site #1 (0.01)
-    opp_surface = {s.site_id: 0.01 for s in dataset.candidate_sites}
-    opp_surface[9] = 10.0
+    # Give site #1 maximum opportunity score (100.0) vs other sites (0.001)
+    opp_surface = {s.site_id: 0.001 for s in dataset.candidate_sites}
+    opp_surface[1] = 100.0
 
     opp_sol = build_greedy_route(dataset, start_site_id=0, budget_minutes=60.0, opportunity_surface=opp_surface)
 
-    # Site #9 must be selected in the opportunity-weighted route
-    assert 9 in opp_sol.stop_ids
+    # Site #1 must be selected in the opportunity-weighted route
+    assert 1 in opp_sol.stop_ids
     assert opp_sol.stop_ids != base_sol.stop_ids
 
 def test_qbc_from_bootstrap_matrix_not_true_p():

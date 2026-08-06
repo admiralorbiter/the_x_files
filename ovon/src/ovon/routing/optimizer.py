@@ -114,11 +114,12 @@ def build_greedy_route(
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0,
     fixed_duration_minutes: Optional[float] = None,
-    opportunity_surface: Optional[Dict[int, float]] = None
+    opportunity_surface: Optional[Dict[int, float]] = None,
+    reward_protocol: Optional[SiteRewardProtocol] = None
 ) -> RouteSolution:
     """
     Construct a route greedily based on marginal utility gain per minute added.
-    Propagates opportunity_surface through every utility evaluation.
+    Propagates opportunity_surface and dynamic reward_protocol through every utility evaluation.
     Preserves dataset object immutability by creating isolated site copies.
     """
     valid_sites = filter_valid_candidates(dataset)
@@ -144,7 +145,8 @@ def build_greedy_route(
         species_names=species_names,
         lambda_redundancy=lambda_redundancy,
         survey_week=survey_week,
-        opportunity_surface=opportunity_surface
+        opportunity_surface=opportunity_surface,
+        reward_protocol=reward_protocol
     )
 
     while True:
@@ -185,7 +187,8 @@ def build_greedy_route(
                 species_names=species_names,
                 lambda_redundancy=lambda_redundancy,
                 survey_week=survey_week,
-                opportunity_surface=opportunity_surface
+                opportunity_surface=opportunity_surface,
+                reward_protocol=reward_protocol
             )
             marginal_u = new_utility - current_utility
             added_time = max(0.1, total_m - cur_tot_m)
@@ -220,7 +223,8 @@ def build_greedy_route(
                         species_names=species_names,
                         lambda_redundancy=lambda_redundancy,
                         survey_week=survey_week,
-                        opportunity_surface=opportunity_surface
+                        opportunity_surface=opportunity_surface,
+                        reward_protocol=reward_protocol
                     )
                     marginal_u = new_utility - current_utility
                     added_time = 5.0
@@ -270,7 +274,8 @@ def refine_route_local_search(
     survey_week: int = 18,
     return_to_hub: bool = True,
     access_buffer_minutes: float = 3.0,
-    opportunity_surface: Optional[Dict[int, float]] = None
+    opportunity_surface: Optional[Dict[int, float]] = None,
+    reward_protocol: Optional[SiteRewardProtocol] = None
 ) -> RouteSolution:
     """
     Refine a route using 2-opt reordering and greedy marginal duration tuning without mutating cached dataset objects.

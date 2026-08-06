@@ -2,6 +2,16 @@ import requests
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 
+@dataclass(frozen=True)
+class TaxonRef:
+    """
+    Canonical taxon identifier reference bridging common names and scientific binomials.
+    Prevents cross-platform mismatch between GBIF, eBird, and iNaturalist evidence.
+    """
+    taxon_id: str
+    scientific_name: str
+    common_name: str
+
 @dataclass
 class SpeciesMetadata:
     common_name: str
@@ -174,6 +184,23 @@ def resolve_common_name(name_or_scientific: str) -> str:
         pass
 
     return name_clean
+
+@functools.lru_cache(maxsize=256)
+def get_canonical_taxon(name_or_scientific: str) -> TaxonRef:
+    """
+    Resolve any common or scientific species string to a single canonical TaxonRef object.
+    Ensures GBIF, eBird, iNaturalist, phenology, and search modes match on taxon_id.
+    """
+    if not name_or_scientific:
+        return TaxonRef(taxon_id="unknown_bird", scientific_name="Unknown", common_name="Unknown Bird")
+
+    common = resolve_common_name(name_or_scientific)
+    curated = BIRD_SPECIES_TAXONOMY.get(common, {})
+    sci_name = curated.get("scientific_name", name_or_scientific.strip())
+    
+    # Standardize taxon_id as lowercase underscore string
+    taxon_id = sci_name.lower().strip().replace(" ", "_")
+    return TaxonRef(taxon_id=taxon_id, scientific_name=sci_name, common_name=common)
 
 def fetch_wikipedia_species_info(species_name: str, timeout: int = 4) -> Optional[Dict[str, str]]:
     """
