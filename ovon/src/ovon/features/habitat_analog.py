@@ -1,12 +1,78 @@
 import numpy as np
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from ovon.utility.metrics import StandardScaler
+from ovon.features.schema import EnvironmentalFeatureVector
+
+def extract_record_habitat(
+    record: Any,
+    background_candidates: Optional[List[Any]] = None,
+    feature_extractor: Optional[Callable[[float, float], np.ndarray]] = None
+) -> np.ndarray:
+    """
+    Extract habitat vector for an occurrence record or candidate site.
+    Uses explicit habitat/env_feature_vector if present, or feature_extractor / nearest candidate site lookup for (lat, lon).
+    """
+    if isinstance(record, EnvironmentalFeatureVector):
+        return record.values
+
+    hab = record.get("habitat") if isinstance(record, dict) else getattr(record, "habitat", None)
+    if hab is not None:
+        if isinstance(hab, EnvironmentalFeatureVector):
+            return hab.values
+        return np.asarray(hab, dtype=float)
+
+    env_vec = record.get("env_feature_vector") if isinstance(record, dict) else getattr(record, "env_feature_vector", None)
+    if env_vec is not None:
+        if isinstance(env_vec, EnvironmentalFeatureVector):
+            return env_vec.values
+        return np.asarray(env_vec, dtype=float)
+
+    lat = record.get("lat") if isinstance(record, dict) else getattr(record, "lat", None)
+    lon = record.get("lon") if isinstance(record, dict) else getattr(record, "lon", None)
+
+    if lat is not None and lon is not None:
+        if feature_extractor is not None:
+            extracted = feature_extractor(float(lat), float(lon))
+            if extracted is not None:
+                return np.asarray(extracted, dtype=float)
+
+        if background_candidates:
+            best_dist = float("inf")
+            best_hab = None
+            for s in background_candidates:
+                s_lat = getattr(s, "lat", None)
+                s_lon = getattr(s, "lon", None)
+                if s_lat is not None and s_lon is not None:
+                    d_sq = (s_lat - float(lat))**2 + (s_lon - float(lon))**2
+                else:
+                    d_sq = (getattr(s, "x", 0.0)**2) + (getattr(s, "y", 0.0)**2)
+                if d_sq < best_dist:
+                    best_dist = d_sq
+                    best_hab = getattr(s, "habitat", None)
+            if best_hab is not None:
+                return np.asarray(best_hab, dtype=float)
+
+    if isinstance(record, dict) and "tree_canopy_pct" in record:
+        return np.array([
+            float(record.get("tree_canopy_pct", 0.40)),
+            float(record.get("impervious_surface_pct", 0.30)),
+            float(record.get("distance_to_water_km", 0.50)),
+            float(record.get("greenness_index", 0.60))
+        ])
+
+    if background_candidates and len(background_candidates) > 0:
+        first_hab = getattr(background_candidates[0], "habitat", None)
+        if first_hab is not None:
+            return np.asarray(first_hab, dtype=float)
+
+    return np.array([0.40, 0.30, 0.50, 0.60])
 
 class HabitatAnalogSearch:
     """
     Learns environmental habitat signatures from verified species presence records
     and predicts environmental analog scores A(s, i) in [0, 1] for unvisited candidate sites.
     Fits feature scaler on regional background dataset candidates first to ensure metric stability.
+    Enforces matching feature vector dimensions across candidates and evidence.
     """
 
     def __init__(self, length_habitat: float = 1.0):
@@ -15,39 +81,51 @@ class HabitatAnalogSearch:
         self.mean_vector: Optional[np.ndarray] = None
         self.presence_vectors_std: Optional[np.ndarray] = None
         self.species_id: Optional[str] = None
+        self.expected_dim: Optional[int] = None
 
     def fit(
         self,
         species_id: str,
-        occurrence_records: List[Dict[str, Any]],
-        background_candidates: Optional[List[Any]] = None
+        occurrence_records: List[Any],
+        background_candidates: Optional[List[Any]] = None,
+        feature_extractor: Optional[Callable[[float, float], np.ndarray]] = None
     ):
         """Fit habitat signature from species occurrence points using regional background scaling."""
         self.species_id = species_id
 
-        # 1. Fit scaler on regional background environment if provided
+        # 1. Determine feature schema dimension from background candidates first
         if background_candidates:
-            bg_features = [
-                np.asarray(getattr(s, "habitat", [0.40, 0.30, 0.50, 0.60]), dtype=float)
-                for s in background_candidates
-            ]
-            self.scaler.fit(np.array(bg_features))
+            bg_features = []
+            for s in background_candidates:
+                h = extract_record_habitat(s)
+                bg_features.append(h)
 
-        # 2. Extract species presence vectors
+            if bg_features:
+                self.expected_dim = len(bg_features[0])
+                for idx, h in enumerate(bg_features):
+                    if len(h) != self.expected_dim:
+                        raise ValueError(
+                            f"Background candidate site {idx} feature dimension {len(h)} "
+                            f"does not match expected dimension {self.expected_dim}."
+                        )
+                self.scaler.fit(np.array(bg_features))
+
+        # 2. Extract species presence vectors from occurrence records
         features = []
         for r in occurrence_records:
-            hab = r.get("habitat") if isinstance(r, dict) else getattr(r, "habitat", None)
-            if hab is None:
-                hab = np.array([
-                    r.get("tree_canopy_pct", 0.40),
-                    r.get("impervious_surface_pct", 0.30),
-                    r.get("distance_to_water_km", 0.50),
-                    r.get("greenness_index", 0.60)
-                ]) if isinstance(r, dict) else np.array([0.40, 0.30, 0.50, 0.60])
-            features.append(np.asarray(hab, dtype=float))
+            hab = extract_record_habitat(r, background_candidates=background_candidates, feature_extractor=feature_extractor)
+            if self.expected_dim is not None and len(hab) != self.expected_dim:
+                raise ValueError(
+                    f"Occurrence record feature dimension ({len(hab)}) does not match expected schema dimension ({self.expected_dim})."
+                )
+            features.append(hab)
 
         if not features:
-            features = [np.array([0.45, 0.25, 0.30, 0.65])]
+            fallback_dim = self.expected_dim or 4
+            features = [np.full(fallback_dim, 0.40)]
+
+        if self.expected_dim is None:
+            self.expected_dim = len(features[0])
 
         X = np.array(features)
         if self.scaler.mean is None:
@@ -60,19 +138,19 @@ class HabitatAnalogSearch:
     def predict_habitat_match(self, candidate_sites: List[Any]) -> np.ndarray:
         """
         Compute Gaussian kernel habitat analog similarity A(s, i) for candidate sites.
-        Safely aligns feature dimensions.
+        Validates feature vector dimensions strictly.
         """
         if self.mean_vector is None or not candidate_sites:
             return np.full(len(candidate_sites), 0.5)
 
-        target_dim = len(self.mean_vector)
+        target_dim = self.expected_dim or len(self.mean_vector)
         scores = []
         for s in candidate_sites:
-            hab = np.asarray(getattr(s, "habitat", np.array([0.40, 0.30, 0.50, 0.60])), dtype=float)
-            if len(hab) < target_dim:
-                hab = np.pad(hab, (0, target_dim - len(hab)), mode='constant', constant_values=0.5)
-            elif len(hab) > target_dim:
-                hab = hab[:target_dim]
+            hab = extract_record_habitat(s)
+            if len(hab) != target_dim:
+                raise ValueError(
+                    f"Candidate site feature dimension ({len(hab)}) does not match model expected dimension ({target_dim})."
+                )
 
             h_std = self.scaler.transform(np.array([hab]))[0]
 

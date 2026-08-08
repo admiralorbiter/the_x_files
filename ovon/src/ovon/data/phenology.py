@@ -117,10 +117,13 @@ def fit_empirical_cyclic_phenology(
     max_val = np.max(smoothed)
     return smoothed / max_val if max_val > 0 else smoothed
 
-def get_weekly_species_weights(species_names: List[str], week: int) -> np.ndarray:
+def get_weekly_species_weights(species_names: Optional[List[str]], week: int) -> np.ndarray:
     """
     Compute dynamic, time-varying species optimization weights w_{s,t} for a target week t in [1, 52].
     """
+    if not species_names:
+        species_names = ["Indigo Bunting", "Yellow-rumped Warbler", "Cardinalis cardinalis"]
+
     week_idx = int(np.clip(week - 1, 0, 51))
     weights = np.zeros(len(species_names), dtype=float)
 

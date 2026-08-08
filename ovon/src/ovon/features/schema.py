@@ -11,12 +11,13 @@ class EnvironmentalFeatureVector:
     values: np.ndarray
 
     def __post_init__(self):
-        vals = np.asarray(self.values, dtype=float)
+        vals = np.array(self.values, dtype=float, copy=True)
         if len(self.feature_names) != len(vals):
             raise ValueError(
                 f"Feature vector dimension mismatch: feature_names length ({len(self.feature_names)}) "
                 f"does not match values length ({len(vals)})."
             )
+        vals.flags.writeable = False
         object.__setattr__(self, "values", vals)
 
     def get_value(self, name: str) -> float:
