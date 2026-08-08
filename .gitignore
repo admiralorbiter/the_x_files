@@ -63,6 +63,16 @@ venv.bak/
 *.swp
 *.swo
 
+# Databases & Emergence Lab Runtime Storage
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+instance/
+data/
+.env
+.env.*
+
 # OS generated files
 .DS_Store
 .DS_Store?
