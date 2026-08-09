@@ -119,13 +119,22 @@ class Governor:
             try:
                 turn = DialogueTurn.model_validate(turn_json)
             except Exception:
+                # Safely extract whatever fields the model DID generate without injecting fake prose
+                target_raw = str(turn_json.get("target_id", turn_json.get("target_agent", "p1")))
+                claim_raw = str(turn_json.get("claim", turn_json.get("message", turn_json.get("thoughts", ""))))
+                evidence_raw = str(turn_json.get("evidence", ""))
+                challenge_raw = str(turn_json.get("challenge", ""))
+                question_raw = str(turn_json.get("question", ""))
+
                 turn = DialogueTurn(
-                    target_id="p1",
-                    claim=turn_json.get("claim", "We must analyze the core assumptions."),
-                    evidence=turn_json.get("evidence", "Reasoning is required."),
-                    challenge=turn_json.get("challenge", "Direct challenge."),
-                    question=turn_json.get("question", "What is the priority?")
+                    target_id=target_raw if target_raw else "p1",
+                    claim=claim_raw,
+                    evidence=evidence_raw,
+                    challenge=challenge_raw,
+                    question=question_raw
                 )
+                telemetry.validation_status = "repaired"
+                telemetry.repairs_applied.append("schema_coercion")
 
             # Deterministic Verifier Pass
             valid_target_pids = [
