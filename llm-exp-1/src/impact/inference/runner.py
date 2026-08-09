@@ -99,7 +99,7 @@ class ExperimentRunner:
     def run(self) -> Path:
         """Executes the experiment with automatic crash resumption."""
         # 1. Load scenarios & treatments
-        adapter = ScruplesAdapter(self.config.data_dir)
+        adapter = ScruplesAdapter(self.config.data_dir, mode=self.config.adapter_mode)
         scenarios = adapter.load_or_fetch()[: self.config.num_scenarios]
         treatments = get_pilot_treatments()
 

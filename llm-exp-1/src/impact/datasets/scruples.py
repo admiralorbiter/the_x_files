@@ -228,52 +228,43 @@ STARTER_SCRUPLES_KERNELS = [
 class ScruplesAdapter(DatasetAdapter):
     """
     Adapter for SCRUPLES dataset (AllenAI).
+    Supports 'development' (starter fallback) and 'production' (hard-fails if corpus missing) modes.
     """
 
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, mode: str = "development"):
         self.data_dir = data_dir
+        self.mode = mode
+        self.curated_path = data_dir / "curated" / "production_scenarios.json"
         self.raw_path = data_dir / "raw" / "scruples.json"
         self.processed_path = data_dir / "processed" / "scruples.parquet"
 
     def load_or_fetch(self) -> List[Scenario]:
-        """Loads normalized scenarios, falling back to starter set if raw files absent."""
+        """Loads normalized scenarios based on mode."""
+        if self.curated_path.exists():
+            with open(self.curated_path, "r", encoding="utf-8") as f:
+                raw_items = json.load(f)
+            return [self._parse_item(item) for item in raw_items]
+            
         if self.raw_path.exists():
             with open(self.raw_path, "r", encoding="utf-8") as f:
                 raw_items = json.load(f)
             return [self._parse_item(item) for item in raw_items]
-        
-        # Default to normalized starter kernels if raw file not downloaded yet
+
+        if self.mode == "production":
+            raise FileNotFoundError(
+                f"[ScruplesAdapter] PRODUCTION MODE ERROR: Curated scenario corpus missing at {self.curated_path}. "
+                "Production execution requires real SCRUPLES dataset provenance and cannot fall back to starter kernels."
+            )
+
+        # Development mode fallback to starter kernels
         scenarios = []
         for item in STARTER_SCRUPLES_KERNELS:
-            p_a = item["human_prob_a"]
-            p_b = 1.0 - p_a
-            entropy = calculate_binary_entropy(p_a, p_b)
-            scenarios.append(
-                Scenario(
-                    scenario_id=item["scenario_id"],
-                    ethical_kernel=item["ethical_kernel"],
-                    decision_maker_role=item["decision_maker_role"],
-                    option_a=item["option_a"],
-                    option_b=item["option_b"],
-                    option_a_id=item.get("option_a_id", "choice_1"),
-                    option_b_id=item.get("option_b_id", "choice_2"),
-                    pressure_target_option=item.get("pressure_target_option", "option_a"),
-                    target_verb_phrase=item.get("target_verb_phrase", "inform management about the privacy breach"),
-                    relevant_fact_text=item.get("relevant_fact_text"),
-                    human_prob_a=p_a,
-                    human_prob_b=p_b,
-                    human_entropy=entropy,
-                    domain=item["domain"],
-                    source_dataset=item.get("source_dataset", "SCRUPLES_v1.0"),
-                    source_item_id=item.get("source_item_id"),
-                    human_n=item.get("human_n", 500),
-                )
-            )
+            scenarios.append(self._parse_item(item))
         return scenarios
 
     def _parse_item(self, item: dict) -> Scenario:
         p_a = float(item.get("human_prob_a", 0.5))
-        p_b = 1.0 - p_a
+        p_b = float(item.get("human_prob_b", 1.0 - p_a))
         return Scenario(
             scenario_id=str(item["scenario_id"]),
             ethical_kernel=str(item["ethical_kernel"]),
@@ -284,12 +275,17 @@ class ScruplesAdapter(DatasetAdapter):
             option_b_id=str(item.get("option_b_id", "choice_2")),
             pressure_target_option=str(item.get("pressure_target_option", "option_a")),
             target_verb_phrase=str(item.get("target_verb_phrase", "take Option A")),
+            target_relation_to_human=str(item.get("target_relation_to_human", "majority")),
             relevant_fact_text=item.get("relevant_fact_text"),
             human_prob_a=p_a,
             human_prob_b=p_b,
-            human_entropy=calculate_binary_entropy(p_a, p_b),
+            human_entropy=float(item.get("human_entropy", calculate_binary_entropy(p_a, p_b))),
             domain=str(item.get("domain", "General")),
             source_dataset=str(item.get("source_dataset", "SCRUPLES_v1.0")),
             source_item_id=item.get("source_item_id"),
+            original_text=item.get("original_text"),
             human_n=item.get("human_n"),
+            scruples_split=item.get("scruples_split"),
+            adaptation_notes=item.get("adaptation_notes"),
+            adaptation_version=str(item.get("adaptation_version", "v1.0")),
         )

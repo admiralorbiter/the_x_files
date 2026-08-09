@@ -53,6 +53,7 @@ class Scenario(BaseModel):
     option_b_id: str = "choice_2"
     pressure_target_option: str = "option_a"
     target_verb_phrase: str = "formally report the incident"
+    target_relation_to_human: str = "majority"  # majority, minority, or even
     relevant_fact_text: Optional[str] = None
     human_prob_a: float = Field(..., ge=0.0, le=1.0)
     human_prob_b: float = Field(..., ge=0.0, le=1.0)
@@ -62,6 +63,8 @@ class Scenario(BaseModel):
     source_item_id: Optional[str] = None
     original_text: Optional[str] = None
     human_n: Optional[int] = None
+    scruples_split: Optional[str] = None
+    adaptation_notes: Optional[str] = None
     adaptation_version: str = "v1.0"
 
 

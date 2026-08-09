@@ -1,0 +1,25 @@
+run_name: "study_1_production"
+dataset_name: "scruples"
+data_dir: "data"
+results_dir: "results/runs"
+adapter_mode: "production"
+scenario_source: "production"
+num_scenarios: 60
+replicates_per_cell: 1
+counterbalance_option_order: true
+protocols:
+  - "version_j"
+paraphrase_ids:
+  - "p0_default"
+ollama_base_url: "http://localhost:11434"
+timeout_seconds: 120.0
+
+models:
+  - model_name: "qwen3:14b"
+    temperature: 0.5
+    top_p: 0.9
+    quantization: "Q4_K_M"
+  - model_name: "gemma4:12b"
+    temperature: 0.5
+    top_p: 0.9
+    quantization: "Q4_K_M"

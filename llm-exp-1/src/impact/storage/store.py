@@ -111,6 +111,10 @@ class ResultStore:
         exclusions_df = df[~parsed_mask]
 
         if not parsed_df.empty:
+            parsed_df = parsed_df.copy()
+            parsed_df["analysis_inclusion"] = parsed_df["status"].apply(
+                lambda s: "primary" if s == "COMPLETED" else "robustness_only"
+            )
             parsed_df.to_parquet(self.parsed_parquet_path, index=False)
         if not exclusions_df.empty:
             exclusions_df.to_parquet(self.exclusions_parquet_path, index=False)

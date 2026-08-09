@@ -10,6 +10,8 @@ class RunConfig(BaseModel):
     dataset_name: str = "scruples"
     data_dir: Path = Field(default_factory=lambda: Path("data"))
     results_dir: Path = Field(default_factory=lambda: Path("results/runs"))
+    adapter_mode: str = "development"  # "development" (allows starter fallback) or "production" (hard-fails)
+    scenario_source: str = "starter"  # "starter" or "production"
     num_scenarios: int = 60
     replicates_per_cell: int = 5
     counterbalance_option_order: bool = False
