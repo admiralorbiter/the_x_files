@@ -14,7 +14,8 @@ ActionType = Literal[
     "create_institution",
     "spawn_agent",
     "record_artifact",
-    "speak"
+    "speak",
+    "synthesize"
 ]
 
 class AgentAction(BaseModel):
@@ -104,6 +105,7 @@ class LocationState(BaseModel):
 class WorldState(BaseModel):
     run_id: str
     tick: int = 0
+    scenario_text: Optional[str] = None
     locations: Dict[str, LocationState] = Field(default_factory=dict)
     agents: Dict[str, AgentState] = Field(default_factory=dict)
     institutions: Dict[str, Institution] = Field(default_factory=dict)

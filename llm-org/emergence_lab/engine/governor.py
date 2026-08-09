@@ -51,6 +51,31 @@ You MUST respond with valid JSON matching this structure:
 }}
 """
 
+DIALOGUE_SYSTEM_PROMPT_TEMPLATE = """You are '{name}', a distinguished panelist participating in a debate on a complex scenario.
+Your Perspective & Background: {persona}
+Your Core Conviction & Driving Motive: {motive}
+
+GUIDELINES FOR NATURAL, EMERGENT DIALOGUE:
+1. Express your perspective authentically, but directly engage with, challenge, or build upon what other panelists have said.
+2. Do NOT give generic textbook speeches. Speak in your authentic voice and probe the underlying tensions.
+3. Be intellectually honest: defend your core conviction, but acknowledge valid points or flaws raised by others when appropriate.
+
+ACTIONS AVAILABLE:
+- "speak": Share your argument, counterpoint, or question with the panel. Set "action_type": "speak" and "message": "Your speech text".
+- "synthesize": Formulate your final conclusion or emerging consensus. Set "action_type": "synthesize" and "message": "Your final synthesis".
+
+You MUST respond with valid JSON matching this structure:
+{{
+  "thoughts": "Your internal reflection on the current debate direction and panel arguments",
+  "action": {{
+    "action_type": "speak|synthesize",
+    "target_agent": "Panelist Name (optional)",
+    "message": "Your contribution to the dialogue",
+    "rationale": "Why you chose this contribution"
+  }}
+}}
+"""
+
 class Governor:
     def __init__(self, repository: EventRepository, ollama_client: OllamaClient, world_state: WorldState):
         self.repo = repository
@@ -63,13 +88,14 @@ class Governor:
             return get_random_shock()
         return None
 
-    def build_user_prompt(self, agent: AgentState) -> str:
+    def build_user_prompt(self, agent: AgentState, max_ticks: int = 5) -> str:
+        # Check if we are in Dialogue Scenario Mode
+        if self.state.scenario_text:
+            return self._build_dialogue_user_prompt(agent, max_ticks)
+
         loc = self.state.locations.get(agent.location, LocationState(name=agent.location, description="Unknown area"))
-        
-        # Identify other agents in same location
         others = [a.name for a in self.state.agents.values() if a.location == agent.location and a.agent_id != agent.agent_id]
         
-        # Extract recent speech/dialogue events from event repo
         all_events = self.repo.get_events(self.state.run_id)
         recent_speech = []
         speech_count_in_scene = 0
@@ -91,11 +117,9 @@ class Governor:
 
         dialogue_section = "\n".join(recent_speech) if recent_speech else "No recent speech."
         
-        # Check for procedural event / shock
         shock = self.get_procedural_shock()
         shock_section = f"\nWORLD EVENT:\n{shock}\n" if shock else ""
 
-        # Impasse mandate directive if dialogue is looping
         if speech_count_in_scene >= 3:
             impasse_directive = "DYNAMIC MANDATE: The current dialogue topic has been debated extensively. You MUST either: 1) Introduce a completely NEW philosophical question or paradox, 2) Write down your conclusions in an Artifact ('record_artifact'), 3) Spawn a disciple ('spawn_agent') to explore another area, or 4) Found a School of Thought ('create_institution')!"
         else:
@@ -118,17 +142,60 @@ PROMPT DIRECTION:
 
 What will you do next on tick {self.state.tick}? Output JSON only."""
 
-    def execute_agent_turn(self, agent_id: str) -> Tuple[AgentTurnProposal, Event]:
+    def _build_dialogue_user_prompt(self, agent: AgentState, max_ticks: int) -> str:
+        others = [a.name for a in self.state.agents.values() if a.agent_id != agent.agent_id]
+        
+        # Include full speech & synthesis history for dialogue mode
+        all_events = self.repo.get_events(self.state.run_id)
+        dialogue_history = []
+        for ev in all_events:
+            ev_type = ev.get("event_type", "")
+            actor = ev.get("actor_id", "Unknown")
+            payload = json.loads(ev["payload"]) if isinstance(ev["payload"], str) else ev["payload"]
+            
+            if ev_type == "action:speak":
+                speech_info = payload.get("speech", {})
+                target = speech_info.get("target", "all")
+                msg = speech_info.get("message", "")
+                dialogue_history.append(f"[{actor} to {target}]: \"{msg}\"")
+            elif ev_type == "action:synthesize":
+                synth_info = payload.get("synthesis", {})
+                msg = synth_info.get("message", "")
+                dialogue_history.append(f"[{actor} FINAL SYNTHESIS]: \"{msg}\"")
+
+        history_section = "\n".join(dialogue_history) if dialogue_history else "(The dialogue has just begun. No statements made yet.)"
+        
+        is_final_round = (self.state.tick >= max_ticks - 1)
+        if is_final_round:
+            round_instruction = "FINAL ROUND: The discussion is concluding. Please select action 'synthesize' and output your definitive summary statement or verdict."
+        else:
+            round_instruction = f"ROUND {self.state.tick + 1} OF {max_ticks}: Respond thoughtfully to the dialogue. Challenge flaws, build on good points, or reframe the core issue."
+
+        return f"""SCENARIO TO DEBATE:
+{self.state.scenario_text}
+
+OTHER PANELISTS PRESENT: {', '.join(others)}
+
+FULL DIALOGUE TRANSCRIPT SO FAR:
+{history_section}
+
+INSTRUCTION FOR THIS TURN:
+{round_instruction}
+
+Output JSON only."""
+
+    def execute_agent_turn(self, agent_id: str, max_ticks: int = 5) -> Tuple[AgentTurnProposal, Event]:
         agent = self.state.agents.get(agent_id)
         if not agent or agent.status != "active":
             raise ValueError(f"Agent {agent_id} is not active.")
 
-        sys_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        template = DIALOGUE_SYSTEM_PROMPT_TEMPLATE if self.state.scenario_text else SYSTEM_PROMPT_TEMPLATE
+        sys_prompt = template.format(
             name=agent.name,
             persona=agent.persona,
             motive=agent.motive
         )
-        usr_prompt = self.build_user_prompt(agent)
+        usr_prompt = self.build_user_prompt(agent, max_ticks=max_ticks)
 
         # 1. Query LLM
         proposal = self.ollama.get_agent_proposal(sys_prompt, usr_prompt)
@@ -232,6 +299,9 @@ What will you do next on tick {self.state.tick}? Output JSON only."""
 
         elif act_type == "speak":
             payload["speech"] = {"target": action.target_agent or "all", "message": action.message or "..."}
+
+        elif act_type == "synthesize":
+            payload["synthesis"] = {"target": action.target_agent or "all", "message": action.message or "..."}
 
         return payload
 
