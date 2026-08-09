@@ -56,9 +56,12 @@ class AgentAction(BaseModel):
         except (ValueError, TypeError):
             return 0
 
+from emergence_lab.domain.telemetry import InferenceResult
+
 class AgentTurnProposal(BaseModel):
     thoughts: str = Field(default="Reflecting on dialogue.", description="Agent's private thoughts and reflection on current situation")
     action: AgentAction
+    telemetry: Optional[InferenceResult] = None
 
 # --- Domain Event Schemas (Append-Only Event Store) ---
 
@@ -72,6 +75,7 @@ class Event(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     previous_hash: Optional[str] = None
     current_hash: Optional[str] = None
+    telemetry: Optional[InferenceResult] = None
 
 # --- Domain Models ---
 

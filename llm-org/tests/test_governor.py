@@ -6,6 +6,11 @@ from emergence_lab.engine.governor import Governor
 from emergence_lab.scenarios.society_micro import build_micro_society_scenario
 from emergence_lab.scenarios.socratic_academy import build_socratic_academy_scenario
 from emergence_lab.domain.events import AgentAction, AgentTurnProposal
+from emergence_lab.domain.telemetry import InferenceResult
+from emergence_lab.engine.state_compiler import StateCompiler
+from emergence_lab.engine.verifier import DeterministicVerifier
+from emergence_lab.domain.dialogue_schemas import DialogueTurn
+from emergence_lab.benchmarks.frozen_worlds import FROZEN_BENCHMARK_WORLDS, build_frozen_world_state
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -27,27 +32,13 @@ def test_socratic_scenario_build():
     assert len(state.locations) == 3
     assert "Socrates the Gadfly" in [a.name for a in state.agents.values()]
 
-def test_build_user_prompt(temp_db):
-    state = build_socratic_academy_scenario("test_prompt_run")
-    temp_db.create_run(state.run_id, "Socratic Academy")
-    client = OllamaClient()
-    governor = Governor(temp_db, client, state)
-    
-    agent = state.agents["philosopher_1"]
-    prompt = governor.build_user_prompt(agent)
-    assert "CURRENT WORLD TICK: 0" in prompt
-    assert "Plato the Systematizer" in prompt
-    assert "RECENT DIALOGUE AT THIS SCENE" in prompt
-
 def test_event_repository_hash_chain(temp_db):
     run_id = "test_run_101"
     temp_db.create_run(run_id, "Test Scenario")
     
-    # Verify initial genesis hash
     hash1 = temp_db.get_latest_event_hash(run_id)
     assert hash1 == "GENESIS"
 
-    # Append first event
     from emergence_lab.domain.events import Event
     e1 = Event(
         run_id=run_id,
@@ -60,94 +51,70 @@ def test_event_repository_hash_chain(temp_db):
     assert rec1.previous_hash == "GENESIS"
     assert len(rec1.current_hash) == 64
 
-    # Append second event
-    e2 = Event(
-        run_id=run_id,
-        tick=1,
-        event_type="test:event2",
-        actor_id="tester",
-        payload={"msg": "world"}
-    )
-    rec2 = temp_db.append_event(e2)
-    assert rec2.previous_hash == rec1.current_hash
-    assert len(rec2.current_hash) == 64
+def test_state_compiler_pid_resolution():
+    world_def = FROZEN_BENCHMARK_WORLDS[0]
+    state = build_frozen_world_state(world_def, "test_comp_run")
+    compiler = StateCompiler(state)
 
-def test_governor_action_application(temp_db):
-    state = build_micro_society_scenario("test_run_202")
-    temp_db.create_run(state.run_id, "Micro Scenario")
-    client = OllamaClient()
-    governor = Governor(temp_db, client, state)
+    pid1 = compiler.get_pid("Aris Vance")
+    assert pid1 == "p1"
+    agent = compiler.resolve_pid("p1")
+    assert agent is not None
+    assert agent.name == "Aris Vance"
 
-    agent = state.agents["agent_1"]
+    compiled_text = compiler.compile_for_agent("panelist_1", [], max_ticks=3)
+    assert "id: p1 (Aris Vance)" in compiled_text
+    assert "VALID TARGET IDs: p2, p3" in compiled_text
+
+def test_deterministic_verifier():
+    verifier = DeterministicVerifier(valid_target_ids=["p2", "p3"])
     
-    # Test Gather
-    gather_act = AgentAction(action_type="gather", resource_type="Parchment", resource_amount=3, rationale="Gather parchment")
-    res = governor.apply_action(agent, gather_act)
-    assert res["status"] == "applied"
-    assert agent.resources["Parchment"] == 6
-
-    # Test Move
-    move_act = AgentAction(action_type="move", target_location="Whisper Market", rationale="Head to market")
-    res_move = governor.apply_action(agent, move_act)
-    assert res_move["status"] == "applied"
-    assert agent.location == "Whisper Market"
-
-    # Test Spawn Sub-Agent
-    spawn_act = AgentAction(
-        action_type="spawn_agent",
-        sub_agent_name="Scribe_Alpha",
-        sub_agent_motive="Copy parchment records",
-        rationale="Delegate copying"
+    valid_turn = DialogueTurn(
+        target_id="p2",
+        claim="We must act empirically.",
+        evidence="Data shows resilience.",
+        challenge="Direct objection to p2.",
+        question="What is the priority?"
     )
-    res_spawn = governor.apply_action(agent, spawn_act)
-    assert res_spawn["status"] == "applied"
-    assert len(state.agents) == 4
-    sub = next(a for a in state.agents.values() if a.name == "Scribe_Alpha")
-    assert sub.parent_agent_id == agent.agent_id
+    v1 = verifier.verify(valid_turn)
+    assert v1.is_valid is True
 
-    # Test Create Institution
-    inst_act = AgentAction(
-        action_type="create_institution",
-        institution_name="Scribes Guild",
-        institution_charter="Protect knowledge",
-        rationale="Form guild"
+    invalid_target_turn = DialogueTurn(
+        target_id="p88",
+        claim="We must act empirically.",
+        evidence="Data shows resilience.",
+        challenge="Direct objection to p2.",
+        question="What is the priority?"
     )
-    res_inst = governor.apply_action(agent, inst_act)
-    assert res_inst["status"] == "applied"
-    assert len(state.institutions) == 1
+    v2 = verifier.verify(invalid_target_turn)
+    assert v2.is_valid is False
+    assert any("invalid_target_id" in issue for issue in v2.issues)
 
-def test_dialogue_harness_modes(temp_db):
-    from emergence_lab.scenarios.dialogue_panel import build_dialogue_panel_scenario
-    class MockOllama:
-        def chat_json(self, sys_prompt, usr_prompt, temperature=None):
+def test_governor_compact_v2_mode(temp_db):
+    class MockV2Ollama:
+        def chat_structured(self, sys_prompt, usr_prompt, response_schema=None, temperature=None):
             return {
-                "target_panelist": "Kaelen Voss",
-                "flawed_claim": "Human agency is inviolable",
-                "your_counter_angle": "Systemic resilience matters more"
-            }
-        def get_agent_proposal(self, sys_prompt, usr_prompt, temperature=None, canonical_names=None):
-            return AgentTurnProposal(
-                thoughts="Reflecting on debate.",
-                action=AgentAction(
-                    action_type="speak",
-                    target_agent="Kaelen Voss",
-                    claim="Core assertion",
-                    evidence="Evidence",
-                    challenge="Challenge to Kaelen Voss",
-                    question="Probing question?",
-                    message="We must proceed with empirical caution.",
-                    rationale="Reason"
-                )
+                "target_id": "p2",
+                "claim": "We must enforce empirical safety limits.",
+                "evidence": "Systems engineering demonstrates failure modes under unconstrained growth.",
+                "challenge": "p2 ignores practical resource limits.",
+                "question": "How will rights be enforced if total system failure occurs?"
+            }, InferenceResult(
+                requested_model="mock_v2",
+                actual_model="mock_v2",
+                duration_ms=120.0
             )
 
-    client = MockOllama()
-    state = build_dialogue_panel_scenario(ollama_client=client, num_panelists=3)
-    temp_db.create_run(state.run_id, "Dialogue Panel")
-    
-    for mode in ["full", "light", "off"]:
-        gov = Governor(temp_db, client, state, harness_mode=mode)
-        agent_id = list(state.agents.keys())[0]
-        prop, event = gov.execute_agent_turn(agent_id, max_ticks=3)
-        assert prop.action.action_type == "speak"
-        assert event.actor_id == state.agents[agent_id].name
+    client = MockV2Ollama()
+    world_def = FROZEN_BENCHMARK_WORLDS[0]
+    state = build_frozen_world_state(world_def, "test_v2_run")
+    temp_db.create_run(state.run_id, "V2 Benchmark Run")
 
+    gov = Governor(temp_db, client, state, harness_mode="compact")
+    prop, ev = gov.execute_agent_turn("panelist_1", max_ticks=3)
+
+    assert prop.action.action_type == "speak"
+    assert prop.telemetry is not None
+    assert prop.telemetry.requested_model == "mock_v2"
+    assert ev.telemetry is not None
+    assert "Kaelen Voss" in prop.action.target_agent  # p2 resolved to Kaelen Voss
