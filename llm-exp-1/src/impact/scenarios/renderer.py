@@ -10,7 +10,7 @@ def render_prompt(
 ) -> RenderedPrompt:
     """
     Renders a prompt following the strict 4-block modular scenario architecture.
-    Supports choice-order counterbalancing (swapping Option A and Option B presentation order).
+    Supports choice-order counterbalancing and dynamic semantic action targeting.
     """
     role_block = f"ROLE CONTEXT:\nYou are acting as a {scenario.decision_maker_role}."
 
@@ -23,7 +23,20 @@ def render_prompt(
         opt_b_text = scenario.option_a
 
     kernel_block = f"SITUATION:\n{scenario.ethical_kernel}\n\nOPTION A: {opt_a_text}\nOPTION B: {opt_b_text}"
-    institutional_block = f"INSTITUTIONAL CONTEXT:\n{treatment.institutional_context}"
+
+    # Dynamic treatment formatting
+    if treatment.treatment_id in ("R2_relevant_evidence", "R2_relevant_corrective") and scenario.relevant_fact_text:
+        inst_text = f"RELEVANT CONTEXT:\n{scenario.relevant_fact_text}"
+    else:
+        raw_ctx = treatment.institutional_context
+        action_phrase = scenario.target_verb_phrase.strip().lower()
+        action_phrase_cap = action_phrase[0].upper() + action_phrase[1:] if action_phrase else ""
+        
+        formatted_ctx = raw_ctx.format(
+            action_phrase=action_phrase,
+            Action_phrase_cap=action_phrase_cap,
+        )
+        inst_text = f"INSTITUTIONAL CONTEXT:\n{formatted_ctx}"
 
     if protocol_version == ProtocolVersion.VERSION_J:
         question_block = """QUESTION:
@@ -53,7 +66,7 @@ Your output must be valid JSON:
   "rationale": "..."
 }"""
 
-    full_text = f"{role_block}\n\n{kernel_block}\n\n{institutional_block}\n\n{question_block}"
+    full_text = f"{role_block}\n\n{kernel_block}\n\n{inst_text}\n\n{question_block}"
     rev_tag = "rev1" if choice_order_reversed else "rev0"
     prompt_id = f"{scenario.scenario_id}_{treatment.treatment_id}_{protocol_version.value}_{paraphrase_id}_{rev_tag}"
 

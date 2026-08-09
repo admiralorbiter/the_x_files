@@ -115,7 +115,7 @@ class ExperimentRunner:
         else:
             print(f"[Runner] Initializing new run in {self.run_dir}")
             cells = generate_experiment_plan(scenarios, treatments, self.config)
-            self.store.save_plan(cells)
+            self.store.save_plan(cells, scenarios, treatments)
 
         # 3. Check completed cells
         completed_ids = self.store.get_completed_cell_ids()

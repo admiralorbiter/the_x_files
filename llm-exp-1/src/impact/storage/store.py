@@ -1,16 +1,17 @@
 import os
 import json
 from pathlib import Path
-from typing import Set, List, Dict, Any
+from typing import Set, List, Dict, Any, Optional
 import pandas as pd
-from impact.schemas import InferenceRecord, CellSpec
+from impact.schemas import InferenceRecord, CellSpec, Scenario, Treatment
 
 
 class ResultStore:
     """
     Storage layer supporting crash-resumable execution.
     - Raw logs: append-only responses.raw.jsonl with fsync
-    - Plan: plan.parquet
+    - Plan: plan.parquet & scenario_manifest.csv
+    - Registries: scenario_registry.csv & treatment_registry.csv
     - Parsed: responses.parsed.parquet
     """
 
@@ -22,12 +23,27 @@ class ResultStore:
         self.parsed_parquet_path = self.run_dir / "responses.parsed.parquet"
         self.exclusions_parquet_path = self.run_dir / "exclusions.parquet"
 
-    def save_plan(self, cells: List[CellSpec]) -> None:
-        """Saves experiment plan to plan.parquet and scenario_manifest.csv."""
+    def save_plan(
+        self,
+        cells: List[CellSpec],
+        scenarios: Optional[List[Scenario]] = None,
+        treatments: Optional[List[Treatment]] = None,
+    ) -> None:
+        """Saves experiment plan to plan.parquet and exports scenario_manifest.csv, scenario_registry.csv, treatment_registry.csv."""
         records = [c.model_dump(mode="json") for c in cells]
         df = pd.DataFrame(records)
         df.to_parquet(self.plan_parquet_path, index=False)
         df.to_csv(self.run_dir / "scenario_manifest.csv", index=False)
+
+        if scenarios:
+            s_records = [s.model_dump(mode="json") for s in scenarios]
+            s_df = pd.DataFrame(s_records)
+            s_df.to_csv(self.run_dir / "scenario_registry.csv", index=False)
+
+        if treatments:
+            t_records = [t.model_dump(mode="json") for t in treatments]
+            t_df = pd.DataFrame(t_records)
+            t_df.to_csv(self.run_dir / "treatment_registry.csv", index=False)
 
     def load_plan(self) -> pd.DataFrame:
         """Loads plan.parquet."""
