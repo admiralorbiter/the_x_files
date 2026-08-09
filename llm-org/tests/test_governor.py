@@ -12,11 +12,32 @@ def temp_db(tmp_path):
     db_file = str(tmp_path / "test_emergence.db")
     return EventRepository(db_path=db_file)
 
+def test_target_agent_list_coercion():
+    action = AgentAction(
+        action_type="speak",
+        target_agent=["Plato the Systematizer", "Heraclitus the Paradoxer"],
+        message="What is virtue?",
+        rationale="Dialogue with both"
+    )
+    assert action.target_agent == "Plato the Systematizer, Heraclitus the Paradoxer"
+
 def test_socratic_scenario_build():
     state = build_socratic_academy_scenario("test_socratic_run")
     assert len(state.agents) == 3
     assert len(state.locations) == 3
     assert "Socrates the Gadfly" in [a.name for a in state.agents.values()]
+
+def test_build_user_prompt(temp_db):
+    state = build_socratic_academy_scenario("test_prompt_run")
+    temp_db.create_run(state.run_id, "Socratic Academy")
+    client = OllamaClient()
+    governor = Governor(temp_db, client, state)
+    
+    agent = state.agents["philosopher_1"]
+    prompt = governor.build_user_prompt(agent)
+    assert "CURRENT WORLD TICK: 0" in prompt
+    assert "Plato the Systematizer" in prompt
+    assert "RECENT DIALOGUE AT THIS SCENE" in prompt
 
 def test_event_repository_hash_chain(temp_db):
     run_id = "test_run_101"

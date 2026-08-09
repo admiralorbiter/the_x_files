@@ -37,6 +37,9 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
 
     for tick in range(1, ticks + 1):
         print(f"\n--- TICK {world_state.tick + 1} ---", flush=True)
+        shock = governor.get_procedural_shock()
+        if shock:
+            print(f"   {shock}", flush=True)
         
         # Schedule active agents
         active_agents = list(governor.state.agents.values())
@@ -47,10 +50,19 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
             print(f"\n[Thinker] {agent.name} (Location: {agent.location})", flush=True)
             try:
                 proposal, event = governor.execute_agent_turn(agent.agent_id)
-                print(f"   Thoughts: {proposal.thoughts}", flush=True)
-                print(f"   Action:   {proposal.action.action_type.upper()}", flush=True)
+                print(f"   Thoughts:  {proposal.thoughts}", flush=True)
+                print(f"   Action:    {proposal.action.action_type.upper()}", flush=True)
+                if proposal.action.action_type == "speak" and proposal.action.message:
+                    target = proposal.action.target_agent or "all"
+                    print(f"   💬 Speech (to {target}): \"{proposal.action.message}\"", flush=True)
+                elif proposal.action.action_type == "record_artifact" and proposal.action.artifact_title:
+                    print(f"   📜 Created Artifact: '{proposal.action.artifact_title}'", flush=True)
+                elif proposal.action.action_type == "create_institution" and proposal.action.institution_name:
+                    print(f"   🏛️ Founded School: '{proposal.action.institution_name}'", flush=True)
+                elif proposal.action.action_type == "spawn_agent" and proposal.action.sub_agent_name:
+                    print(f"   🌱 Spawned Disciple: '{proposal.action.sub_agent_name}'", flush=True)
                 print(f"   Rationale: {proposal.action.rationale}", flush=True)
-                print(f"   Hash:     {event.current_hash[:12]}...", flush=True)
+                print(f"   Hash:      {event.current_hash[:12]}...", flush=True)
             except Exception as e:
                 print(f"   Warning: Error during turn execution: {e}", flush=True)
         

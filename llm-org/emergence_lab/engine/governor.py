@@ -7,6 +7,7 @@ from emergence_lab.domain.events import (
 )
 from emergence_lab.adapters.db import EventRepository
 from emergence_lab.adapters.ollama_client import OllamaClient
+from emergence_lab.engine.topics import get_random_shock, get_random_topic
 
 logger = logging.getLogger("governor")
 
@@ -15,23 +16,25 @@ Your persona: {persona}
 Your core motive: {motive}
 
 WORLD RULES & ACTIONS:
-1. You make decisions based on your motive and current surroundings.
+1. You make decisions based on your motive, recent scene dialogue, and world events.
 2. Available actions:
-   - "observe": Look around without changing state.
+   - "speak": Speak directly to another thinker or the group. Specify "target_agent" (optional) and "message".
+   - "record_artifact": Write a document, Socratic dialogue, or manifesto. Specify "artifact_title" and "artifact_content".
+   - "create_institution": Establish a school of thought, council, or rule. Specify "institution_name" and "institution_charter".
+   - "spawn_agent": Delegate work by creating a sub-agent/disciple. Specify "sub_agent_name" and "sub_agent_motive".
    - "move": Move to a connected location. Specify "target_location".
    - "gather": Gather a resource at your location. Specify "resource_type" and "resource_amount" (max 5).
    - "trade": Give resources to another agent at your location. Specify "target_agent", "resource_type", "resource_amount".
-   - "create_institution": Establish a council, org, or rule. Specify "institution_name" and "institution_charter".
-   - "spawn_agent": Delegate work by creating a sub-agent. Specify "sub_agent_name" and "sub_agent_motive".
-   - "record_artifact": Write a document/treaty/log. Specify "artifact_title" and "artifact_content".
-   - "speak": Say something to others. Specify "target_agent" (optional) and "message".
+   - "observe": Look around without changing state.
 
 CRITICAL INSTRUCTION:
+Do NOT repeat questions or arguments already made in the scene. If a debate topic reaches an impasse, shift the inquiry, write an artifact ('record_artifact'), spawn a disciple ('spawn_agent'), or found a school of thought ('create_institution')!
+
 You MUST respond with valid JSON matching this structure:
 {{
   "thoughts": "Your private reflection on your situation and goals",
   "action": {{
-    "action_type": "move|gather|trade|create_institution|spawn_agent|record_artifact|speak|observe",
+    "action_type": "speak|record_artifact|create_institution|spawn_agent|move|gather|trade|observe",
     "target_location": "location_name (if move)",
     "target_agent": "agent_name (if trade or speak)",
     "resource_type": "resource_name (if gather or trade)",
@@ -54,14 +57,49 @@ class Governor:
         self.ollama = ollama_client
         self.state = world_state
 
+    def get_procedural_shock(self) -> Optional[str]:
+        # Trigger procedural shock every 3 ticks or when scene dialogue is long
+        if self.state.tick > 0 and self.state.tick % 3 == 0:
+            return get_random_shock()
+        return None
+
     def build_user_prompt(self, agent: AgentState) -> str:
         loc = self.state.locations.get(agent.location, LocationState(name=agent.location, description="Unknown area"))
         
         # Identify other agents in same location
         others = [a.name for a in self.state.agents.values() if a.location == agent.location and a.agent_id != agent.agent_id]
         
+        # Extract recent speech/dialogue events from event repo
+        all_events = self.repo.get_events(self.state.run_id)
+        recent_speech = []
+        speech_count_in_scene = 0
+        for ev in reversed(all_events):
+            if ev.get("event_type") == "action:speak":
+                speech_count_in_scene += 1
+                payload = json.loads(ev["payload"]) if isinstance(ev["payload"], str) else ev["payload"]
+                speech_info = payload.get("speech", {})
+                target = speech_info.get("target", "all")
+                msg = speech_info.get("message", "")
+                actor = ev.get("actor_id", "Unknown")
+                recent_speech.append(f"- {actor} (to {target}): \"{msg}\"")
+                if len(recent_speech) >= 4:
+                    break
+        recent_speech.reverse()
+
         inst_list = [f"{i.name} (Charter: {i.charter})" for i in self.state.institutions.values()]
         art_list = [f"'{art.title}' by {art.author_id}" for art in self.state.artifacts.values()]
+
+        dialogue_section = "\n".join(recent_speech) if recent_speech else "No recent speech."
+        
+        # Check for procedural event / shock
+        shock = self.get_procedural_shock()
+        shock_section = f"\nWORLD EVENT:\n{shock}\n" if shock else ""
+
+        # Impasse mandate directive if dialogue is looping
+        if speech_count_in_scene >= 3:
+            impasse_directive = "DYNAMIC MANDATE: The current dialogue topic has been debated extensively. You MUST either: 1) Introduce a completely NEW philosophical question or paradox, 2) Write down your conclusions in an Artifact ('record_artifact'), 3) Spawn a disciple ('spawn_agent') to explore another area, or 4) Found a School of Thought ('create_institution')!"
+        else:
+            impasse_directive = "Engage nearby thinkers with a fresh question, Socratic challenge, or original argument."
 
         return f"""CURRENT WORLD TICK: {self.state.tick}
 YOUR LOCATION: {loc.name} - {loc.description}
@@ -71,6 +109,12 @@ AGENTS PRESENT HERE: {', '.join(others) if others else 'None'}
 YOUR INVENTORY: {json.dumps(agent.resources)}
 EXISTING INSTITUTIONS: {', '.join(inst_list) if inst_list else 'None'}
 RECORDED ARTIFACTS: {', '.join(art_list) if art_list else 'None'}
+{shock_section}
+RECENT DIALOGUE AT THIS SCENE:
+{dialogue_section}
+
+PROMPT DIRECTION:
+{impasse_directive}
 
 What will you do next on tick {self.state.tick}? Output JSON only."""
 

@@ -8,48 +8,49 @@ def build_socratic_academy_scenario(run_id: str = "") -> WorldState:
     locations = {
         "Stoa of Paradoxes": LocationState(
             name="Stoa of Paradoxes",
-            description="A shaded marble colonnade where philosophers gather to debate the nature of mind, reality, and consciousness.",
-            resources={"Axioms": 10, "Aporia": 15},
+            description="A grand marble colonnade where thinkers gather to debate the nature of truth, mind, and reality.",
+            resources={"Axioms": 15, "Aporia": 20},
             connected_locations=["Academy of Ethics", "Dialectic Grove"]
         ),
         "Academy of Ethics": LocationState(
             name="Academy of Ethics",
-            description="A courtyard dedicated to inquiries on justice, virtue, governance, and the good life.",
-            resources={"Axioms": 12, "Elenchus": 8},
+            description="A shaded courtyard dedicated to inquiries on justice, virtue, governance, and the good life.",
+            resources={"Axioms": 12, "Elenchus": 10},
             connected_locations=["Stoa of Paradoxes", "Dialectic Grove"]
         ),
         "Dialectic Grove": LocationState(
             name="Dialectic Grove",
-            description="A quiet grove of olive trees where thinkers test hypotheses through rigorous cross-examination.",
-            resources={"Aporia": 10, "Elenchus": 12},
+            description="A quiet grove of ancient olive trees where thinkers test hypotheses through cross-examination.",
+            resources={"Aporia": 12, "Elenchus": 15},
             connected_locations=["Stoa of Paradoxes", "Academy of Ethics"]
         )
     }
 
+    # Start all thinkers together in the Stoa of Paradoxes for immediate dialogue!
     agents = {
         "philosopher_1": AgentState(
             agent_id="philosopher_1",
             name="Socrates the Gadfly",
-            persona="Relentless seeker of wisdom who uses questioning to expose ignorance and examine assumptions.",
-            motive="Expose unexamined assumptions, uncover Aporia (puzzles), and spawn disciple sub-agents to question dogma.",
+            persona="Uncompromising seeker of wisdom who uses Socratic questioning to challenge unexamined dogma and expose logical paradoxes.",
+            motive="Expose unexamined assumptions, question nearby thinkers directly using 'speak', generate Aporia, and spawn disciple sub-agents.",
             location="Stoa of Paradoxes",
-            resources={"Aporia": 4}
+            resources={"Aporia": 5}
         ),
         "philosopher_2": AgentState(
             agent_id="philosopher_2",
             name="Plato the Systematizer",
-            persona="Visionary philosopher aiming to discover objective forms and harmonize ideals into lasting institutions.",
-            motive="Synthesize Axioms, establish an Academy School of Thought, and record foundational Socratic Dialogues.",
-            location="Academy of Ethics",
-            resources={"Axioms": 3}
+            persona="Visionary philosopher aiming to discover ideal forms, debate ethics, and harmonize ideas into lasting institutions.",
+            motive="Engage in dialogue with Socrates and Heraclitus using 'speak', synthesize Axioms, establish an Academy School of Thought, and record Socratic Dialogues.",
+            location="Stoa of Paradoxes",
+            resources={"Axioms": 4}
         ),
         "philosopher_3": AgentState(
             agent_id="philosopher_3",
             name="Heraclitus the Paradoxer",
-            persona="Philosopher of change who believes truth emerges through dialectical tension and perpetual flux.",
-            motive="Challenge rigid Axioms, engage in Elenchus debates, and author treatises on the harmony of opposites.",
-            location="Dialectic Grove",
-            resources={"Elenchus": 3}
+            persona="Philosopher of dialectic tension who believes truth emerges through change, argument, and the clash of opposing ideas.",
+            motive="Challenge rigid Axioms by engaging nearby thinkers in 'speak' debates, offer Elenchus refutations, and author treatises on paradox.",
+            location="Stoa of Paradoxes",
+            resources={"Elenchus": 4}
         )
     }
 

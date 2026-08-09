@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import Dict, List, Optional, Any, Literal
-from pydantic import BaseModel, Field
+from typing import Dict, List, Optional, Any, Literal, Union
+from pydantic import BaseModel, Field, field_validator
 import uuid
 import datetime
 
@@ -30,10 +30,29 @@ class AgentAction(BaseModel):
     artifact_title: Optional[str] = None
     artifact_content: Optional[str] = None
     message: Optional[str] = None
-    rationale: str = Field(description="Internal reasoning for choosing this action")
+    rationale: str = Field(default="Reasoning for action", description="Internal reasoning for choosing this action")
+
+    @field_validator('target_agent', 'target_location', mode='before')
+    @classmethod
+    def coerce_string_or_list(cls, v: Any) -> Optional[str]:
+        if isinstance(v, list):
+            return ", ".join(str(item) for item in v)
+        if v is not None:
+            return str(v)
+        return None
+
+    @field_validator('resource_amount', mode='before')
+    @classmethod
+    def coerce_int(cls, v: Any) -> int:
+        if isinstance(v, list) and len(v) > 0:
+            v = v[0]
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
 
 class AgentTurnProposal(BaseModel):
-    thoughts: str = Field(description="Agent's private thoughts and reflection on current situation")
+    thoughts: str = Field(default="Reflecting on dialogue.", description="Agent's private thoughts and reflection on current situation")
     action: AgentAction
 
 # --- Domain Event Schemas (Append-Only Event Store) ---
