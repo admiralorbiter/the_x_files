@@ -115,3 +115,39 @@ def test_governor_action_application(temp_db):
     res_inst = governor.apply_action(agent, inst_act)
     assert res_inst["status"] == "applied"
     assert len(state.institutions) == 1
+
+def test_dialogue_harness_modes(temp_db):
+    from emergence_lab.scenarios.dialogue_panel import build_dialogue_panel_scenario
+    class MockOllama:
+        def chat_json(self, sys_prompt, usr_prompt, temperature=None):
+            return {
+                "target_panelist": "Kaelen Voss",
+                "flawed_claim": "Human agency is inviolable",
+                "your_counter_angle": "Systemic resilience matters more"
+            }
+        def get_agent_proposal(self, sys_prompt, usr_prompt, temperature=None, canonical_names=None):
+            return AgentTurnProposal(
+                thoughts="Reflecting on debate.",
+                action=AgentAction(
+                    action_type="speak",
+                    target_agent="Kaelen Voss",
+                    claim="Core assertion",
+                    evidence="Evidence",
+                    challenge="Challenge to Kaelen Voss",
+                    question="Probing question?",
+                    message="We must proceed with empirical caution.",
+                    rationale="Reason"
+                )
+            )
+
+    client = MockOllama()
+    state = build_dialogue_panel_scenario(ollama_client=client, num_panelists=3)
+    temp_db.create_run(state.run_id, "Dialogue Panel")
+    
+    for mode in ["full", "light", "off"]:
+        gov = Governor(temp_db, client, state, harness_mode=mode)
+        agent_id = list(state.agents.keys())[0]
+        prop, event = gov.execute_agent_turn(agent_id, max_ticks=3)
+        assert prop.action.action_type == "speak"
+        assert event.actor_id == state.agents[agent_id].name
+

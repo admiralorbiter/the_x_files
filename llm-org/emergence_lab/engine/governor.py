@@ -7,7 +7,12 @@ from emergence_lab.domain.events import (
 )
 from emergence_lab.adapters.db import EventRepository
 from emergence_lab.adapters.ollama_client import OllamaClient
-from emergence_lab.engine.topics import get_random_shock, get_random_topic
+from emergence_lab.engine.topics import get_random_shock
+from emergence_lab.engine.dialogue_scaffolds import (
+    DIALECTICAL_ROLES, STRUCTURED_DIALOGUE_SYSTEM_PROMPT,
+    PHASE_1_ANALYSIS_PROMPT, PHASE_2_RESPONSE_PROMPT,
+    MODERATOR_PROVOKER_PROMPT, ROUND_DIRECTIVES
+)
 
 logger = logging.getLogger("governor")
 
@@ -77,19 +82,24 @@ You MUST respond with valid JSON matching this structure:
 """
 
 class Governor:
-    def __init__(self, repository: EventRepository, ollama_client: OllamaClient, world_state: WorldState):
+    def __init__(
+        self,
+        repository: EventRepository,
+        ollama_client: OllamaClient,
+        world_state: WorldState,
+        harness_mode: str = "full"
+    ):
         self.repo = repository
         self.ollama = ollama_client
         self.state = world_state
+        self.harness_mode = harness_mode.lower()  # "full", "light", "off"
 
     def get_procedural_shock(self) -> Optional[str]:
-        # Trigger procedural shock every 3 ticks or when scene dialogue is long
         if self.state.tick > 0 and self.state.tick % 3 == 0:
             return get_random_shock()
         return None
 
     def build_user_prompt(self, agent: AgentState, max_ticks: int = 5) -> str:
-        # Check if we are in Dialogue Scenario Mode
         if self.state.scenario_text:
             return self._build_dialogue_user_prompt(agent, max_ticks)
 
@@ -143,9 +153,8 @@ PROMPT DIRECTION:
 What will you do next on tick {self.state.tick}? Output JSON only."""
 
     def _build_dialogue_user_prompt(self, agent: AgentState, max_ticks: int) -> str:
-        others = [a.name for a in self.state.agents.values() if a.agent_id != agent.agent_id]
+        others = [f"{a.name} ({a.dialectical_role or 'Panelist'})" for a in self.state.agents.values() if a.agent_id != agent.agent_id]
         
-        # Include full speech & synthesis history for dialogue mode
         all_events = self.repo.get_events(self.state.run_id)
         dialogue_history = []
         for ev in all_events:
@@ -162,43 +171,176 @@ What will you do next on tick {self.state.tick}? Output JSON only."""
                 synth_info = payload.get("synthesis", {})
                 msg = synth_info.get("message", "")
                 dialogue_history.append(f"[{actor} FINAL SYNTHESIS]: \"{msg}\"")
+            elif ev_type == "event:moderator_provocation":
+                prov = payload.get("provocation", "")
+                dialogue_history.append(f"⚡ [MODERATOR PROVOCATION]: {prov}")
 
         history_section = "\n".join(dialogue_history) if dialogue_history else "(The dialogue has just begun. No statements made yet.)"
         
         is_final_round = (self.state.tick >= max_ticks - 1)
+        curr_round = self.state.tick + 1
+        
         if is_final_round:
-            round_instruction = "FINAL ROUND: The discussion is concluding. Please select action 'synthesize' and output your definitive summary statement or verdict."
+            round_instruction = ROUND_DIRECTIVES["final"]
+        elif curr_round == 1:
+            round_instruction = ROUND_DIRECTIVES[1]
         else:
-            round_instruction = f"ROUND {self.state.tick + 1} OF {max_ticks}: Respond thoughtfully to the dialogue. Challenge flaws, build on good points, or reframe the core issue."
+            round_instruction = ROUND_DIRECTIVES["middle"]
+
+        stance_section = f"YOUR ASSIGNED STANCE: {agent.stance}\n" if agent.stance else ""
 
         return f"""SCENARIO TO DEBATE:
 {self.state.scenario_text}
 
 OTHER PANELISTS PRESENT: {', '.join(others)}
-
+{stance_section}
 FULL DIALOGUE TRANSCRIPT SO FAR:
 {history_section}
 
-INSTRUCTION FOR THIS TURN:
+ROUND {curr_round} OF {max_ticks} DIRECTIVE:
 {round_instruction}
 
 Output JSON only."""
+
+    def run_moderator_pass(self) -> Optional[str]:
+        """Runs a moderator evaluation to detect easy consensus and inject provocations."""
+        if not self.state.scenario_text or self.harness_mode == "off":
+            return None
+
+        all_events = self.repo.get_events(self.state.run_id)
+        recent_speeches = []
+        for ev in reversed(all_events):
+            if ev.get("event_type") == "action:speak":
+                payload = json.loads(ev["payload"]) if isinstance(ev["payload"], str) else ev["payload"]
+                actor = ev.get("actor_id", "")
+                msg = payload.get("speech", {}).get("message", "")
+                recent_speeches.append(f"{actor}: \"{msg}\"")
+                if len(recent_speeches) >= len(self.state.agents):
+                    break
+        
+        if not recent_speeches:
+            return None
+
+        transcript = "\n".join(reversed(recent_speeches))
+        sys_prompt = "You are a sharp, unbiased debate moderator monitoring an intellectual panel."
+        usr_prompt = MODERATOR_PROVOKER_PROMPT.format(
+            scenario=self.state.scenario_text,
+            transcript=transcript
+        )
+
+        try:
+            res = self.ollama.chat_json(sys_prompt, usr_prompt, temperature=0.7)
+            if res.get("is_consensus_too_easy") is True or res.get("provocation", "").upper() != "NONE":
+                provocation = res.get("provocation", "")
+                if provocation and provocation.upper() != "NONE" and len(provocation.strip()) > 15:
+                    # Append event
+                    event = Event(
+                        run_id=self.state.run_id,
+                        tick=self.state.tick,
+                        event_type="event:moderator_provocation",
+                        actor_id="MODERATOR",
+                        payload={"provocation": provocation}
+                    )
+                    self.repo.append_event(event)
+                    return provocation
+        except Exception as e:
+            logger.warning(f"Moderator pass failed: {e}")
+
+        return None
 
     def execute_agent_turn(self, agent_id: str, max_ticks: int = 5) -> Tuple[AgentTurnProposal, Event]:
         agent = self.state.agents.get(agent_id)
         if not agent or agent.status != "active":
             raise ValueError(f"Agent {agent_id} is not active.")
 
-        template = DIALOGUE_SYSTEM_PROMPT_TEMPLATE if self.state.scenario_text else SYSTEM_PROMPT_TEMPLATE
-        sys_prompt = template.format(
-            name=agent.name,
-            persona=agent.persona,
-            motive=agent.motive
-        )
-        usr_prompt = self.build_user_prompt(agent, max_ticks=max_ticks)
+        canonical_names = [a.name for a in self.state.agents.values()]
+        role_info = DIALECTICAL_ROLES.get(agent.dialectical_role or "SYNTHESIZER", DIALECTICAL_ROLES["SYNTHESIZER"])
+        temp = role_info.get("temperature", 0.7)
 
-        # 1. Query LLM
-        proposal = self.ollama.get_agent_proposal(sys_prompt, usr_prompt)
+        # Mode: OFF - original unconstrained behavior
+        if self.harness_mode == "off":
+            template = DIALOGUE_SYSTEM_PROMPT_TEMPLATE if self.state.scenario_text else SYSTEM_PROMPT_TEMPLATE
+            sys_prompt = template.format(
+                name=agent.name,
+                persona=agent.persona,
+                motive=agent.motive
+            )
+            usr_prompt = self.build_user_prompt(agent, max_ticks=max_ticks)
+            proposal = self.ollama.get_agent_proposal(sys_prompt, usr_prompt, canonical_names=canonical_names)
+
+        # Mode: FULL - 2-phase decomposed turn (highest dialectical quality for small & large models)
+        elif self.harness_mode == "full" and self.state.scenario_text and agent.dialectical_role:
+            # Phase 1: Intake Analysis
+            p1_usr = PHASE_1_ANALYSIS_PROMPT.format(
+                name=agent.name,
+                role_title=role_info["title"],
+                scenario=self.state.scenario_text
+            )
+            all_events = self.repo.get_events(self.state.run_id)
+            dialogue_history = [
+                f"[{ev.get('actor_id') if ev.get('event_type') != 'event:moderator_provocation' else 'MODERATOR'}]: \"{json.loads(ev['payload']).get('speech', {}).get('message', json.loads(ev['payload']).get('provocation', '')) if isinstance(ev['payload'], str) else ev['payload'].get('speech', {}).get('message', ev['payload'].get('provocation', ''))}\""
+                for ev in all_events if ev.get("event_type") in ["action:speak", "event:moderator_provocation"]
+            ]
+            history_text = "\n".join(dialogue_history) if dialogue_history else "(No statements made yet.)"
+            p1_usr += f"\n\nFULL TRANSCRIPT:\n{history_text}"
+
+            p1_res = {}
+            try:
+                p1_res = self.ollama.chat_json("You are an analytical philosopher.", p1_usr, temperature=0.3)
+            except Exception:
+                pass
+
+            target = p1_res.get("target_panelist") or "the preceding panelists"
+            claim_flawed = p1_res.get("flawed_claim") or "the general assumptions being made"
+            counter_angle = p1_res.get("your_counter_angle") or agent.motive
+
+            # Phase 2: Response Generation
+            sys_prompt = STRUCTURED_DIALOGUE_SYSTEM_PROMPT.format(
+                name=agent.name,
+                persona=agent.persona,
+                motive=agent.motive,
+                role_title=role_info["title"],
+                role_instruction=role_info["instruction"],
+                stance=agent.stance or agent.motive
+            )
+            p2_usr = PHASE_2_RESPONSE_PROMPT.format(
+                name=agent.name,
+                role_title=role_info["title"],
+                scenario=self.state.scenario_text,
+                target_panelist=target,
+                flawed_claim=claim_flawed,
+                your_counter_angle=counter_angle,
+                round_num=self.state.tick + 1,
+                max_rounds=max_ticks,
+                stance=agent.stance or agent.motive,
+                motive=agent.motive
+            )
+            p2_usr += f"\n\nTRANSCRIPT:\n{history_text}"
+
+            proposal = self.ollama.get_agent_proposal(
+                sys_prompt,
+                p2_usr,
+                temperature=temp,
+                canonical_names=canonical_names
+            )
+
+        # Mode: LIGHT - single call with structured prompt scaffolding
+        else:
+            sys_prompt = STRUCTURED_DIALOGUE_SYSTEM_PROMPT.format(
+                name=agent.name,
+                persona=agent.persona,
+                motive=agent.motive,
+                role_title=role_info["title"],
+                role_instruction=role_info["instruction"],
+                stance=agent.stance or agent.motive
+            )
+            usr_prompt = self.build_user_prompt(agent, max_ticks=max_ticks)
+            proposal = self.ollama.get_agent_proposal(
+                sys_prompt,
+                usr_prompt,
+                temperature=temp,
+                canonical_names=canonical_names
+            )
 
         # 2. Validate & Apply State Mutation
         result_payload = self.apply_action(agent, proposal.action)
@@ -298,10 +440,24 @@ Output JSON only."""
             payload["artifact"] = {"id": art.artifact_id, "title": art.title}
 
         elif act_type == "speak":
-            payload["speech"] = {"target": action.target_agent or "all", "message": action.message or "..."}
+            payload["speech"] = {
+                "target": action.target_agent or "all",
+                "message": action.message or "...",
+                "claim": action.claim,
+                "evidence": action.evidence,
+                "challenge": action.challenge,
+                "question": action.question
+            }
 
         elif act_type == "synthesize":
-            payload["synthesis"] = {"target": action.target_agent or "all", "message": action.message or "..."}
+            payload["synthesis"] = {
+                "target": action.target_agent or "all",
+                "message": action.message or "...",
+                "claim": action.claim,
+                "evidence": action.evidence,
+                "challenge": action.challenge,
+                "question": action.question
+            }
 
         return payload
 

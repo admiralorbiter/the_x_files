@@ -15,7 +15,14 @@ from emergence_lab.scenarios.dialogue_panel import build_dialogue_panel_scenario
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-def run_simulation(ticks: int = 5, model_name: str = default_config.default_model, db_path: str = default_config.db_path, scenario: str = "dialogue", panelists: int = 4):
+def run_simulation(
+    ticks: int = 5,
+    model_name: str = default_config.default_model,
+    db_path: str = default_config.db_path,
+    scenario: str = "dialogue",
+    panelists: int = 4,
+    harness: str = "full"
+):
     client = OllamaClient(model=model_name)
     repo = EventRepository(db_path=db_path)
 
@@ -34,6 +41,7 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
     print(f" EMERGENCE LAB -- {scenario_title}")
     print("=" * 70)
     print(f" -> Model: {model_name}")
+    print(f" -> Harness Mode: {harness.upper()}")
     print(f" -> DB Path: {db_path}")
     print(f" -> Total Rounds/Ticks: {ticks}")
     if world_state.scenario_text:
@@ -42,11 +50,13 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
         print("-" * 70)
         print(" 🏛️ GENERATED PANELISTS:")
         for a in world_state.agents.values():
-            print(f"   * {a.name}\n     - Background: {a.persona}\n     - Driving Motive: {a.motive}\n")
+            role_str = f" [{a.dialectical_role}]" if a.dialectical_role else ""
+            stance_str = f"\n     - Stance: {a.stance}" if a.stance else ""
+            print(f"   * {a.name}{role_str}\n     - Background: {a.persona}\n     - Driving Motive: {a.motive}{stance_str}\n")
     print("-" * 70, flush=True)
 
     repo.create_run(world_state.run_id, scenario_name=scenario_title)
-    governor = Governor(repository=repo, ollama_client=client, world_state=world_state)
+    governor = Governor(repository=repo, ollama_client=client, world_state=world_state, harness_mode=harness)
 
     for tick in range(1, ticks + 1):
         round_label = f"ROUND {world_state.tick + 1} OF {ticks}" if world_state.scenario_text else f"TICK {world_state.tick + 1}"
@@ -57,12 +67,19 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
             if shock:
                 print(f"   {shock}", flush=True)
         
+        # Check moderator pass between middle rounds
+        if world_state.scenario_text and world_state.tick > 0:
+            provocation = governor.run_moderator_pass()
+            if provocation:
+                print(f"\n ⚡ [MODERATOR PROVOCATION]:\n \"{provocation}\"\n", flush=True)
+
         active_agents = list(governor.state.agents.values())
         for agent in active_agents:
             if agent.status != "active":
                 continue
             
-            print(f"\n[Panelist] {agent.name}", flush=True)
+            role_tag = f" ({agent.dialectical_role})" if agent.dialectical_role else ""
+            print(f"\n[Panelist] {agent.name}{role_tag}", flush=True)
             try:
                 proposal, event = governor.execute_agent_turn(agent.agent_id, max_ticks=ticks)
                 print(f"   💭 Internal Reflection: {proposal.thoughts}", flush=True)
@@ -95,6 +112,11 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
         print(f"\n 📜 SCENARIO: {world_state.scenario_text}")
         print("\n 💬 PANEL STATEMENTS & SYNTHESIS:")
         all_events = repo.get_events(world_state.run_id)
+        
+        speech_lengths = []
+        question_count = 0
+        moderator_count = 0
+        
         for ev in all_events:
             ev_type = ev.get("event_type", "")
             actor = ev.get("actor_id", "")
@@ -102,10 +124,29 @@ def run_simulation(ticks: int = 5, model_name: str = default_config.default_mode
             
             if ev_type == "action:speak":
                 msg = payload.get("speech", {}).get("message", "")
+                speech_lengths.append(len(msg))
+                if "?" in msg:
+                    question_count += 1
                 print(f"\n [{actor}]:\n \"{msg}\"")
             elif ev_type == "action:synthesize":
                 msg = payload.get("synthesis", {}).get("message", "")
+                speech_lengths.append(len(msg))
+                if "?" in msg:
+                    question_count += 1
                 print(f"\n 🏆 [{actor} FINAL VERDICT/SYNTHESIS]:\n \"{msg}\"")
+            elif ev_type == "event:moderator_provocation":
+                moderator_count += 1
+                prov = payload.get("provocation", "")
+                print(f"\n ⚡ [MODERATOR PROVOCATION]:\n \"{prov}\"")
+
+        avg_length = sum(speech_lengths) / len(speech_lengths) if speech_lengths else 0
+        print("\n" + "-" * 70)
+        print(" 📊 DIALECTIC QUALITY METRICS:")
+        print(f"   * Average Speech Length: {avg_length:.1f} characters")
+        print(f"   * Probing Questions Posed: {question_count}")
+        print(f"   * Moderator Interventions: {moderator_count}")
+        print(f"   * Harness Mode Active: {harness.upper()}")
+        print("-" * 70)
     else:
         print(f" -> Total Active Thinkers: {len(governor.state.agents)}")
         for a in governor.state.agents.values():
@@ -133,14 +174,21 @@ def main():
     run_parser.add_argument("--db", type=str, default=default_config.db_path, help="SQLite database file")
     run_parser.add_argument("--scenario", type=str, default="dialogue", choices=["dialogue", "socratic", "micro"], help="Scenario selection")
     run_parser.add_argument("--panelists", type=int, default=4, help="Number of generated panelists for dialogue scenario")
+    run_parser.add_argument("--harness", type=str, default="full", choices=["full", "light", "off"], help="Dialogue harness mode (full, light, off)")
 
     args = parser.parse_args()
 
     if args.command == "run":
-        run_simulation(ticks=args.ticks, model_name=args.model, db_path=args.db, scenario=args.scenario, panelists=args.panelists)
+        run_simulation(
+            ticks=args.ticks,
+            model_name=args.model,
+            db_path=args.db,
+            scenario=args.scenario,
+            panelists=args.panelists,
+            harness=args.harness
+        )
     else:
         run_parser.print_help()
 
 if __name__ == "__main__":
     main()
-

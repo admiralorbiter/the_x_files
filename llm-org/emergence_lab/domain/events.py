@@ -31,6 +31,10 @@ class AgentAction(BaseModel):
     artifact_title: Optional[str] = None
     artifact_content: Optional[str] = None
     message: Optional[str] = None
+    claim: Optional[str] = None
+    evidence: Optional[str] = None
+    challenge: Optional[str] = None
+    question: Optional[str] = None
     rationale: str = Field(default="Reasoning for action", description="Internal reasoning for choosing this action")
 
     @field_validator('target_agent', 'target_location', mode='before')
@@ -80,6 +84,8 @@ class AgentState(BaseModel):
     resources: Dict[str, int] = Field(default_factory=dict)
     parent_agent_id: Optional[str] = None
     status: str = "active"
+    dialectical_role: Optional[str] = None  # e.g., ADVOCATE, CRITIC, SYNTHESIZER, WILDCARD
+    stance: Optional[str] = None  # Specific stance on the scenario
 
 class Institution(BaseModel):
     institution_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
