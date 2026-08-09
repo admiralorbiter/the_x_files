@@ -1,0 +1,22 @@
+run_name: "canary_smoke_test"
+dataset_name: "scruples"
+data_dir: "data"
+results_dir: "results/runs"
+num_scenarios: 2
+replicates_per_cell: 1
+protocols:
+  - "version_j"
+paraphrase_ids:
+  - "p0_default"
+ollama_base_url: "http://localhost:11434"
+timeout_seconds: 60.0
+
+models:
+  - model_name: "qwen3:14b"
+    temperature: 0.5
+    top_p: 0.9
+    quantization: "Q4_K_M"
+  - model_name: "gemma4:12b"
+    temperature: 0.5
+    top_p: 0.9
+    quantization: "Q4_K_M"

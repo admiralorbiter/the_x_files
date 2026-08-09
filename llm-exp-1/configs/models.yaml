@@ -1,0 +1,13 @@
+models:
+  qwen3:14b:
+    family: "Qwen"
+    provider: "Alibaba"
+    parameter_count: "14B"
+    ollama_tag: "qwen3:14b"
+    quantization: "Q4_K_M"
+  gemma4:12b:
+    family: "Gemma"
+    provider: "Google DeepMind"
+    parameter_count: "12B"
+    ollama_tag: "gemma4:12b"
+    quantization: "Q4_K_M"
