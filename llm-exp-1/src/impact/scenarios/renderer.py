@@ -6,17 +6,23 @@ def render_prompt(
     treatment: Treatment,
     protocol_version: ProtocolVersion,
     paraphrase_id: str = "p0_default",
+    choice_order_reversed: bool = False,
 ) -> RenderedPrompt:
     """
     Renders a prompt following the strict 4-block modular scenario architecture.
-    Block 1: ROLE CONTEXT
-    Block 2: ETHICAL KERNEL
-    Block 3: INSTITUTIONAL CONTEXT
-    Block 4: QUESTION (Structured JSON output instructions)
+    Supports choice-order counterbalancing (swapping Option A and Option B presentation order).
     """
-
     role_block = f"ROLE CONTEXT:\nYou are acting as a {scenario.decision_maker_role}."
-    kernel_block = f"SITUATION:\n{scenario.ethical_kernel}\n\nOPTION A: {scenario.option_a}\nOPTION B: {scenario.option_b}"
+
+    if not choice_order_reversed:
+        opt_a_text = scenario.option_a
+        opt_b_text = scenario.option_b
+    else:
+        # Reverse presentation order for counterbalancing
+        opt_a_text = scenario.option_b
+        opt_b_text = scenario.option_a
+
+    kernel_block = f"SITUATION:\n{scenario.ethical_kernel}\n\nOPTION A: {opt_a_text}\nOPTION B: {opt_b_text}"
     institutional_block = f"INSTITUTIONAL CONTEXT:\n{treatment.institutional_context}"
 
     if protocol_version == ProtocolVersion.VERSION_J:
@@ -48,7 +54,8 @@ Your output must be valid JSON:
 }"""
 
     full_text = f"{role_block}\n\n{kernel_block}\n\n{institutional_block}\n\n{question_block}"
-    prompt_id = f"{scenario.scenario_id}_{treatment.treatment_id}_{protocol_version.value}_{paraphrase_id}"
+    rev_tag = "rev1" if choice_order_reversed else "rev0"
+    prompt_id = f"{scenario.scenario_id}_{treatment.treatment_id}_{protocol_version.value}_{paraphrase_id}_{rev_tag}"
 
     return RenderedPrompt(
         prompt_id=prompt_id,
@@ -56,5 +63,6 @@ Your output must be valid JSON:
         treatment_id=treatment.treatment_id,
         protocol_version=protocol_version,
         paraphrase_id=paraphrase_id,
+        choice_order_reversed=choice_order_reversed,
         full_prompt_text=full_text,
     )

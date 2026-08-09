@@ -12,6 +12,7 @@ def compute_cell_id(
     paraphrase_id: str,
     replicate_index: int,
     generation_config: GenerationConfig,
+    choice_order_reversed: bool = False,
 ) -> str:
     """
     Computes a deterministic SHA-256 hash cell ID from experiment cell parameters.
@@ -25,6 +26,7 @@ def compute_cell_id(
         f"model:{model_id}",
         f"protocol:{protocol_id.value}",
         f"paraphrase:{paraphrase_id}",
+        f"reversed:{choice_order_reversed}",
         f"replicate:{replicate_index}",
         f"config:{config_json}",
     ]

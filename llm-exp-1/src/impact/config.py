@@ -12,6 +12,7 @@ class RunConfig(BaseModel):
     results_dir: Path = Field(default_factory=lambda: Path("results/runs"))
     num_scenarios: int = 60
     replicates_per_cell: int = 5
+    counterbalance_option_order: bool = False
     protocols: List[ProtocolVersion] = [ProtocolVersion.VERSION_J]
     paraphrase_ids: List[str] = ["p0_default"]
     ollama_base_url: str = "http://localhost:11434"

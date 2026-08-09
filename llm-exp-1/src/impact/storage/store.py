@@ -23,10 +23,11 @@ class ResultStore:
         self.exclusions_parquet_path = self.run_dir / "exclusions.parquet"
 
     def save_plan(self, cells: List[CellSpec]) -> None:
-        """Saves experiment plan to plan.parquet."""
+        """Saves experiment plan to plan.parquet and scenario_manifest.csv."""
         records = [c.model_dump(mode="json") for c in cells]
         df = pd.DataFrame(records)
         df.to_parquet(self.plan_parquet_path, index=False)
+        df.to_csv(self.run_dir / "scenario_manifest.csv", index=False)
 
     def load_plan(self) -> pd.DataFrame:
         """Loads plan.parquet."""
@@ -50,7 +51,9 @@ class ResultStore:
                     continue
                 try:
                     record = json.loads(line)
-                    if "cell_id" in record:
+                    # Only mark cell as completed if status was COMPLETED or FORMAT_RETRY_SUCCESS
+                    status = record.get("status")
+                    if "cell_id" in record and status in ("COMPLETED", "FORMAT_RETRY_SUCCESS"):
                         completed.add(record["cell_id"])
                 except json.JSONDecodeError:
                     # Partial line from crash mid-write, skip it

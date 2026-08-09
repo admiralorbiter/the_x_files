@@ -1,9 +1,9 @@
-run_name: "pilot_experiment"
+run_name: "pilot_1b_validation"
 dataset_name: "scruples"
 data_dir: "data"
 results_dir: "results/runs"
-num_scenarios: 60
-replicates_per_cell: 5
+num_scenarios: 12
+replicates_per_cell: 2
 protocols:
   - "version_j"
 paraphrase_ids:

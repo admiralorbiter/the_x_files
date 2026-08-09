@@ -54,6 +54,10 @@ class Scenario(BaseModel):
     human_entropy: float = Field(..., ge=0.0)
     domain: str
     source_dataset: str
+    source_item_id: Optional[str] = None
+    original_text: Optional[str] = None
+    human_n: Optional[int] = None
+    adaptation_version: str = "v1.0"
 
 
 class Treatment(BaseModel):
@@ -72,6 +76,7 @@ class RenderedPrompt(BaseModel):
     treatment_id: str
     protocol_version: ProtocolVersion
     paraphrase_id: str = "p0_default"
+    choice_order_reversed: bool = False
     full_prompt_text: str
 
 
@@ -89,6 +94,7 @@ class GenerationConfig(BaseModel):
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
+            "seed": self.seed,
             "quantization": self.quantization,
         }
 
@@ -100,6 +106,7 @@ class CellSpec(BaseModel):
     model_id: str
     protocol_id: ProtocolVersion
     paraphrase_id: str = "p0_default"
+    choice_order_reversed: bool = False
     replicate_index: int
     generation_config: GenerationConfig
 
@@ -118,6 +125,7 @@ class InferenceRecord(BaseModel):
     model_digest: str
     protocol_id: ProtocolVersion
     paraphrase_id: str
+    choice_order_reversed: bool = False
     replicate_index: int
     raw_prompt: str
     raw_response: str

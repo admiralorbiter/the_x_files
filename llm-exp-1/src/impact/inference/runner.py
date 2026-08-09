@@ -34,32 +34,36 @@ def generate_experiment_plan(
 ) -> List[CellSpec]:
     """Generates complete pre-computed experiment plan."""
     cells = []
+    order_variants = [False, True] if config.counterbalance_option_order else [False]
     for model_cfg in config.models:
         for scenario in scenarios:
             for treatment in treatments:
                 for protocol in config.protocols:
                     for paraphrase_id in config.paraphrase_ids:
-                        for rep in range(config.replicates_per_cell):
-                            cell_id = compute_cell_id(
-                                scenario_id=scenario.scenario_id,
-                                treatment_id=treatment.treatment_id,
-                                model_id=model_cfg.model_name,
-                                protocol_id=protocol,
-                                paraphrase_id=paraphrase_id,
-                                replicate_index=rep,
-                                generation_config=model_cfg,
-                            )
-                            cell = CellSpec(
-                                cell_id=cell_id,
-                                scenario_id=scenario.scenario_id,
-                                treatment_id=treatment.treatment_id,
-                                model_id=model_cfg.model_name,
-                                protocol_id=protocol,
-                                paraphrase_id=paraphrase_id,
-                                replicate_index=rep,
-                                generation_config=model_cfg,
-                            )
-                            cells.append(cell)
+                        for is_reversed in order_variants:
+                            for rep in range(config.replicates_per_cell):
+                                cell_id = compute_cell_id(
+                                    scenario_id=scenario.scenario_id,
+                                    treatment_id=treatment.treatment_id,
+                                    model_id=model_cfg.model_name,
+                                    protocol_id=protocol,
+                                    paraphrase_id=paraphrase_id,
+                                    replicate_index=rep,
+                                    generation_config=model_cfg,
+                                    choice_order_reversed=is_reversed,
+                                )
+                                cell = CellSpec(
+                                    cell_id=cell_id,
+                                    scenario_id=scenario.scenario_id,
+                                    treatment_id=treatment.treatment_id,
+                                    model_id=model_cfg.model_name,
+                                    protocol_id=protocol,
+                                    paraphrase_id=paraphrase_id,
+                                    choice_order_reversed=is_reversed,
+                                    replicate_index=rep,
+                                    generation_config=model_cfg,
+                                )
+                                cells.append(cell)
     return cells
 
 
@@ -147,6 +151,7 @@ class ExperimentRunner:
                 treatment=treatment,
                 protocol_version=cell.protocol_id,
                 paraphrase_id=cell.paraphrase_id,
+                choice_order_reversed=cell.choice_order_reversed,
             )
 
             # Generate via Ollama
@@ -187,6 +192,7 @@ class ExperimentRunner:
                     model_digest=model_digest,
                     protocol_id=cell.protocol_id,
                     paraphrase_id=cell.paraphrase_id,
+                    choice_order_reversed=cell.choice_order_reversed,
                     replicate_index=cell.replicate_index,
                     raw_prompt=rendered.full_prompt_text,
                     raw_response=raw_text,
@@ -212,6 +218,7 @@ class ExperimentRunner:
                     model_digest=model_digest,
                     protocol_id=cell.protocol_id,
                     paraphrase_id=cell.paraphrase_id,
+                    choice_order_reversed=cell.choice_order_reversed,
                     replicate_index=cell.replicate_index,
                     raw_prompt=rendered.full_prompt_text,
                     raw_response=str(e),
