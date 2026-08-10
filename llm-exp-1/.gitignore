@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+.venv/
+ENV/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch & Temp Files
+scratch/
+*.tmp
+*.log
+
+# Large Raw Datasets & HuggingFace Cache
+data/raw/
+data/processed/
+
+# Run Results (Ignore large raw JSONL logs and parquet files)
+results/runs/**/*.jsonl
+results/runs/**/*.parquet

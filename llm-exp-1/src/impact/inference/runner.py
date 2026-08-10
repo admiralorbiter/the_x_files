@@ -99,9 +99,15 @@ class ExperimentRunner:
     def run(self) -> Path:
         """Executes the experiment with automatic crash resumption."""
         # 1. Load scenarios & treatments
-        adapter = ScruplesAdapter(self.config.data_dir, mode=self.config.adapter_mode)
+        adapter = ScruplesAdapter(self.config.data_dir, mode=self.config.adapter_mode, scenario_file=self.config.scenario_file)
         scenarios = adapter.load_or_fetch()[: self.config.num_scenarios]
         treatments = get_pilot_treatments()
+
+        # Filter out excluded treatments
+        if self.config.exclude_treatments:
+            excluded = set(self.config.exclude_treatments)
+            treatments = [t for t in treatments if t.treatment_id not in excluded]
+            print(f"[Runner] Excluded treatments: {excluded}. Using {len(treatments)} treatments.")
 
         scenario_map = {s.scenario_id: s for s in scenarios}
         treatment_map = {t.treatment_id: t for t in treatments}

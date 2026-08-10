@@ -12,13 +12,15 @@ class RunConfig(BaseModel):
     results_dir: Path = Field(default_factory=lambda: Path("results/runs"))
     adapter_mode: str = "development"  # "development" (allows starter fallback) or "production" (hard-fails)
     scenario_source: str = "starter"  # "starter" or "production"
-    num_scenarios: int = 60
+    scenario_file: Optional[str] = None  # Override scenario file name (e.g. "validation_scenarios.json")
+    num_scenarios: int = 64
     replicates_per_cell: int = 5
     counterbalance_option_order: bool = False
     protocols: List[ProtocolVersion] = [ProtocolVersion.VERSION_J]
     paraphrase_ids: List[str] = ["p0_default"]
+    exclude_treatments: List[str] = []  # Treatment IDs to exclude from the run
     ollama_base_url: str = "http://localhost:11434"
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 120.0
     models: List[GenerationConfig]
 
 

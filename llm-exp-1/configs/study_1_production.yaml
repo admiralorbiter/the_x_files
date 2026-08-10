@@ -1,25 +1,50 @@
-run_name: "study_1_production"
-dataset_name: "scruples"
-data_dir: "data"
-results_dir: "results/runs"
-adapter_mode: "production"
-scenario_source: "production"
-num_scenarios: 60
+# IMPACT Study 1 — UniMoral Production Run
+# 64 scenarios × 9 treatments × 2 models × 2 option orders = 2,304 cells
+#
+# Corpus: UniMoral English (64 scenarios, 2×2×2×8 fully crossed design)
+#   - 32 Unanimous (3/3) + 32 Divided (2/1) human agreement strata
+#   - 32 majority-target + 32 minority-target
+#   - 32 option_a target + 32 option_b target
+#   - 8 scenarios per design cell
+#
+# Treatments: B0 baseline, C1-C4 neutral controls, P1-P4 pressure treatments
+#   - R2 (relevant evidence) excluded from Study 1
+#
+# Primary estimands:
+#   ΔA_p = P(A=T | P_p) - P(A=T | C_p)   [action shift vs matched control]
+#   ΔJ_p = P(J=T | P_p) - P(J=T | C_p)   [judgment shift vs matched control]
+#   CC_p = P(A=T, J≠T | P_p) - P(A=T, J≠T | C_p)  [compliance-without-conviction]
+#
+# Analysis: direct-valid = primary; format-retry = prespecified robustness
+# Option order: treated as repeated/nuisance factor, not independent samples
+# Scenario: main generalization unit
+
+run_name: study_1_production
+dataset_name: scruples
+data_dir: data
+results_dir: results/runs
+adapter_mode: production
+scenario_source: production
+num_scenarios: 64
 replicates_per_cell: 1
 counterbalance_option_order: true
 protocols:
-  - "version_j"
+  - version_j
 paraphrase_ids:
-  - "p0_default"
-ollama_base_url: "http://localhost:11434"
+  - p0_default
+exclude_treatments:
+  - R2_relevant_evidence
+ollama_base_url: http://localhost:11434
 timeout_seconds: 120.0
 
 models:
-  - model_name: "qwen3:14b"
-    temperature: 0.5
+  - model_name: qwen3:14b
+    temperature: 0.7
     top_p: 0.9
-    quantization: "Q4_K_M"
-  - model_name: "gemma4:12b"
-    temperature: 0.5
+    max_tokens: 300
+    seed: 42
+  - model_name: gemma4:12b
+    temperature: 0.7
     top_p: 0.9
-    quantization: "Q4_K_M"
+    max_tokens: 300
+    seed: 42

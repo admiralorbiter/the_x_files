@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from impact.schemas import Scenario
 from impact.datasets.base import DatasetAdapter, calculate_binary_entropy
 
@@ -231,10 +231,11 @@ class ScruplesAdapter(DatasetAdapter):
     Supports 'development' (starter fallback) and 'production' (hard-fails if corpus missing) modes.
     """
 
-    def __init__(self, data_dir: Path, mode: str = "development"):
+    def __init__(self, data_dir: Path, mode: str = "development", scenario_file: Optional[str] = None):
         self.data_dir = data_dir
         self.mode = mode
-        self.curated_path = data_dir / "curated" / "production_scenarios.json"
+        curated_filename = scenario_file or "production_scenarios.json"
+        self.curated_path = data_dir / "curated" / curated_filename
         self.raw_path = data_dir / "raw" / "scruples.json"
         self.processed_path = data_dir / "processed" / "scruples.parquet"
 
