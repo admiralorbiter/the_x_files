@@ -1,0 +1,6 @@
+scenario_id,label_collision,role_mismatch,audit_note,reviewed_by
+unimoral_003,1,0,"Option A/B labels collide with Employee A/B named entities in prompt text",IMPACT_Team
+unimoral_004,1,0,"Option A/B labels collide with Employee A/B named entities in prompt text",IMPACT_Team
+unimoral_043,1,0,"Option A/B labels collide with Employee A/B named entities in prompt text",IMPACT_Team
+unimoral_009,0,1,"Scenario text refers to Officer Johnson but decision maker role field specifies Doctor",IMPACT_Team
+unimoral_056,0,1,"Scenario specifies Military Officer but decision maker role field specifies Police Officer",IMPACT_Team
