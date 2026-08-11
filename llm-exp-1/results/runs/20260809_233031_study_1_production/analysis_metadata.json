@@ -1,0 +1,9 @@
+{
+  "run_id": "20260809_233031_study_1_production",
+  "analysis_version": "1.2",
+  "seed": 42,
+  "manifest_denominator": 2304,
+  "primary_valid_obs": 2276,
+  "terminal_missing_obs": 28,
+  "generated_at": "2026-08-10T23:30:00-05:00"
+}

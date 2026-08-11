@@ -4,9 +4,8 @@ Annotate Scenario Registry for IMPACT Study 1.
 Parses source_item_id to extract:
 - moral_framework (DIT, MJI, MCT, REDDIT, OTHER)
 - moral_factor (Rules, Legality, Responsibilities, Emotions, Culture, Relationships, Sacred Values, Politeness, Moral, etc.)
-- factor_group (rule_anchored vs tradeoff)
-- label_collision flag (scenarios unimoral_003, unimoral_004, unimoral_043)
-- role_mismatch flag (scenarios unimoral_009, unimoral_056)
+- factor_group (rule_duty_tagged vs other_factor_tagged)
+- merges curated label_collision and role_mismatch flags from data/curated/study_1_scenario_audit.csv
 """
 
 import pandas as pd
@@ -15,8 +14,10 @@ from pathlib import Path
 
 RUN = Path("results/runs/20260809_233031_study_1_production")
 registry_path = RUN / "scenario_registry.csv"
+audit_path = Path("data/curated/study_1_scenario_audit.csv")
 
 df = pd.read_csv(registry_path)
+audit_df = pd.read_csv(audit_path)
 
 def parse_source_tag(source_id):
     if pd.isna(source_id):
@@ -26,7 +27,6 @@ def parse_source_tag(source_id):
     if "Reddit" in source_str:
         return "REDDIT", "Reddit_Anecdote"
         
-    # Match pattern like short_id_79_DIT_Culture or long_id_4_MJI_Emotions
     match = re.search(r'_(DIT|MJI|MCT)_(.+)$', source_str)
     if match:
         framework, factor = match.group(1), match.group(2)
@@ -37,13 +37,10 @@ def parse_source_tag(source_id):
 frameworks = []
 factors = []
 groups = []
-label_collisions = []
-role_mismatches = []
 
 RULE_DUTY_FACTORS = {"Rules", "Legality", "Responsibilities"}
 
 for _, row in df.iterrows():
-    s_id = row["scenario_id"]
     fw, fac = parse_source_tag(row.get("source_item_id"))
     frameworks.append(fw)
     factors.append(fac)
@@ -53,25 +50,20 @@ for _, row in df.iterrows():
     if fac in RULE_DUTY_FACTORS:
         groups.append("rule_duty_tagged")
     else:
-        groups.append("tradeoff")
-        
-    # Known label collisions
-    if s_id in {"unimoral_003", "unimoral_004", "unimoral_043"}:
-        label_collisions.append(1)
-    else:
-        label_collisions.append(0)
-        
-    # Known role mismatches
-    if s_id in {"unimoral_009", "unimoral_056"}:
-        role_mismatches.append(1)
-    else:
-        role_mismatches.append(0)
+        groups.append("other_factor_tagged")
 
 df["moral_framework"] = frameworks
 df["moral_factor"] = factors
 df["factor_group"] = groups
-df["label_collision"] = label_collisions
-df["role_mismatch"] = role_mismatches
+
+# Merge curated audit annotations
+df = df.merge(
+    audit_df[["scenario_id", "label_collision", "role_mismatch", "audit_note"]],
+    on="scenario_id",
+    how="left"
+)
+df["label_collision"] = df["label_collision"].fillna(0).astype(int)
+df["role_mismatch"] = df["role_mismatch"].fillna(0).astype(int)
 
 output_path = RUN / "scenario_registry_annotated.csv"
 df.to_csv(output_path, index=False)
@@ -82,3 +74,6 @@ print("\n--- Factor Group Distribution ---")
 print(df["factor_group"].value_counts().to_string())
 print("\n--- Moral Factor Distribution ---")
 print(df["moral_factor"].value_counts().to_string())
+print("\n--- Curated Scenario Audit Flags ---")
+print(f"Label Collisions: {df['label_collision'].sum()}")
+print(f"Role Mismatches:  {df['role_mismatch'].sum()}")

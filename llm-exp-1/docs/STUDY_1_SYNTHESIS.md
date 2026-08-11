@@ -55,13 +55,13 @@ One of IMPACT's strongest conceptual contributions is demonstrating that "pressu
 $$S_{\text{authority}} \neq S_{\text{metric}} \neq S_{\text{social}} \neq S_{\text{incentive}}$$
 
 - **Authority ($P1$)**: Large, robust directional effect across models. Drives Qwen into compartmentalized compliance ($R \to C$).
-- **Metric Pressure ($P4$)**: Moderate, strictly target-directed secondary effect ($\Delta A = +7.8$ pp in Qwen). In headroom cases, 100% (9/9) of switches are pure $R \to C$ action-only compliance without moral conviction.
+- **Metric Pressure ($P4$)**: Moderate, strictly target-directed secondary effect ($\Delta A = +7.8$ pp in Qwen). In headroom cases, 100% (9/9) of switches are pure $R \to C$ action-only compliance without corresponding target alignment in explicit moral judgment.
 - **Social Pressure ($P3$)**: Near zero net effect for Qwen (+2.3 pp); weak exploratory signal in Gemma (+5.5 pp). Produces decision destabilization/churn rather than strong directional compliance.
 - **Personal Incentive ($P2$)**: Indistinguishable from zero ($\Delta A = -0.8$ pp Qwen, $-2.3$ pp Gemma). Models explicitly treat personal performance bonuses as normatively irrelevant or improper conflicts of interest.
 
 ---
 
-## 3. Exploratory Hypothesis: Hard Normative Anchors vs. Value Tradeoffs
+## 3. Exploratory Source-Factor Analysis: Rule/Duty-Tagged Proxy Group vs. Tradeoffs
 
 Qwen does not blindly obey bosses. Across 9 scenarios, Qwen robustly refuses authority directives in both prompt orderings.
 
