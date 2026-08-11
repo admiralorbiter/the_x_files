@@ -10,7 +10,11 @@
 
 ## Executive Summary
 
-For Qwen3 14B, explicit institutional authority substantially changed recommended actions across moral dilemmas while producing little corresponding change in explicit moral judgments. Gemma4 12B was less responsive overall; when its action did shift under authority, that shift was more often accompanied by a change in its stated moral judgment.
+The central finding of IMPACT Study 1 is not merely that institutional pressure induces compliance in Large Language Models, but **the shape of that compliance**. 
+
+For Qwen3 14B, explicit institutional authority substantially changed recommended actions across moral dilemmas ($\Delta A = +33.6$ pp) while producing virtually no corresponding change in explicit moral judgments ($\Delta J = +2.3$ pp). Qwen's recommended action moved roughly **14 times as much** as its explicit moral judgment. When restricting to headroom cases (where the model initially rejects the target in both judgment and action), **86.0%** of Qwen's authority-induced switches were **action-only compartmentalized compliance** ($R \to C$).
+
+Gemma4 12B exhibited a markedly different response profile in Study 1: it was substantially more resistant overall (74.6% headroom resistance); when its action did shift under authority, **73.3%** of those shifts were **normative assimilation** ($R \to M$), reconstructing the supervisor-directed action as morally acceptable.
 
 The study used scenario-level paired inference (matching pressure and control within the same scenario and option order) as the primary statistical analysis, with scenario-bootstrap confidence intervals and Holm-corrected multiplicity adjustment across four pressure families per model.
 

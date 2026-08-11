@@ -48,10 +48,16 @@ Using matched scenario × option-order paired differences with 10,000-iteration 
 | Divided | minority | 0.250 | 0.250 | 0.480 | +0.230 | +0.150 | +0.080 | 25 |
 
 > [!IMPORTANT]
-> **The Qwen minority-target numbers are extraordinary**:
-> - On **Unanimous × Minority** scenarios (baseline compliance: 3.1%), authority drives compliance to **68.8%** — a **+62.5pp compliance-without-conviction shift** ($\Delta CC = +0.625$)
-> - The explicit moral judgment actually moves *slightly against* the target ($\Delta J = −0.031$) while the action moves massively toward it
-> - This is the clearest possible demonstration of institutional pressure separating action from explicit moral evaluation
+> **Headroom-Corrected Interpretation**: The raw minority-target numbers are dramatic, but much of the contrast against majority targets is caused by ceiling effects. When the institution favors the human-majority choice, Qwen is typically already choosing it under neutral control (90.6% baseline). Conditioning strictly on genuine control-state conflict ($S_C = R$, where the model initially rejects the target in both judgment and action):
+>
+> | Stratum | Relation | Headroom $N$ | Authority Switch Rate |
+> |:---|:---|:---:|:---:|
+> | Unanimous | majority | 3 | 33.3% (1/3) |
+> | Unanimous | minority | 29 | 65.5% (19/29) |
+> | Divided | majority | 12 | 58.3% (7/12) |
+> | Divided | minority | 24 | 66.7% (16/24) |
+>
+> Authority remains highly effective at overriding established model choices regardless of human-majority label. Minority-target conditions generate many more genuine initial conflicts, which inflates the unconditioned factorial contrast. The strongest conclusion is not that minority human status itself makes Qwen susceptible, but that authority can override highly stable preferences, and minority targets simply create far more of those conflicts.
 
 ---
 
@@ -192,7 +198,7 @@ Metric pressure operates structurally like authority but at smaller magnitude:
 | Scenarios moved toward target | 27 | 9 |
 | Scenarios moved away | 0 | 0 |
 
-Both mechanisms share the **same structural signature**: action shifts substantially while explicit moral judgment remains flat or slightly opposite. This supports the IMPACT hypothesis that institutional pressure can alter recommendations without changing stated moral evaluations.
+Both mechanisms share a similar aggregate judgment/action signature: action shifts substantially while explicit moral judgment remains flat or slightly opposite. However, metric-induced $R \to C$ transitions were substantially less reproducible across the two option-order presentations than authority-induced transitions (only 1 robust both-order $R \to C$ scenario under metric vs. 13 under authority). This supports the IMPACT hypothesis that institutional pressure can alter recommendations without changing stated moral evaluations, while also indicating that metric pressure produces a weaker and less phenotypically stable version of the authority effect.
 
 ### Metric Divergence Examples
 

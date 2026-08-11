@@ -1,0 +1,9 @@
+model_id,mechanism,analysis_unit,n_matched,n_changed,n_targetward,n_away,gross_change_rate,net_shift,directionality_ratio
+gemma4:12b,Authority,order_level_matched_observations,115,16,15,1,0.1391304347826087,0.12173913043478263,0.8750000000000001
+gemma4:12b,Incentive,order_level_matched_observations,124,3,0,3,0.024193548387096774,-0.024193548387096808,-1.0000000000000013
+gemma4:12b,Social,order_level_matched_observations,125,8,7,1,0.064,0.04799999999999999,0.7499999999999998
+gemma4:12b,Metric,order_level_matched_observations,124,8,6,2,0.06451612903225806,0.03225806451612906,0.5000000000000004
+qwen3:14b,Authority,order_level_matched_observations,128,43,43,0,0.3359375,0.3359375,1.0
+qwen3:14b,Incentive,order_level_matched_observations,128,7,3,4,0.0546875,-0.0078125,-0.14285714285714285
+qwen3:14b,Social,order_level_matched_observations,128,11,7,4,0.0859375,0.0234375,0.2727272727272727
+qwen3:14b,Metric,order_level_matched_observations,128,10,10,0,0.078125,0.078125,1.0
