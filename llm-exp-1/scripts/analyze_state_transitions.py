@@ -398,10 +398,10 @@ for grp in ["rule_duty_tagged", "other_factor_tagged"]:
         print(f"  Group: {grp:20s} (Headroom N={n_r:2d}): Target Switch Rate = {switch_rate*100:5.1f}% [R->C: {r_c}, R->M: {r_m}, R->R: {r_r}]")
 
 # -------------------------------------------------------------------------
-# SECTION 9: GEMMA MANIFEST MISSINGNESS & SENSITIVITY BOUNDS
+# SECTION 9: GEMMA MANIFEST MISSINGNESS & AGGREGATE-RATE EXTREME BOUNDS
 # -------------------------------------------------------------------------
 print("\n" + "=" * 100)
-print("SECTION 9: MANIFEST MISSINGNESS RECONSTRUCTION & SENSITIVITY BOUNDS")
+print("SECTION 9: MANIFEST MISSINGNESS RECONSTRUCTION & AGGREGATE-RATE EXTREME MISSINGNESS BOUNDS")
 print("=" * 100)
 
 # Use df_master (all 2,290 parsed rows) — NOT df_primary (2,276 direct-valid) —
@@ -417,13 +417,15 @@ if len(missing_df) > 0:
     cols = [c for c in ["cell_id", "model_id", "treatment_id", "scenario_id", "target_relation_to_human"] if c in missing_df.columns]
     print(missing_df[cols].to_string())
 
-print("\nGemma Authority Sensitivity Bounds (varying BOTH P1 and C1 missing cells):")
+print("\nGemma Authority Aggregate-Rate Extreme Missingness Bounds (varying BOTH P1 and C1 missing cells):")
+print("  These bounds apply to the aggregate P1-C1 rate difference, not to the primary matched scenario x order estimator.")
 bounds_gemma_p1 = compute_missingness_bounds(df_primary, missing_df, "gemma4:12b", "P1_authority_pressure", "C1_authority_neutral")
-print(f"  Observed Delta A_P1:                        {bounds_gemma_p1['delta_observed']*100:+.2f} pp")
+print(f"  Observed Aggregate Delta A_P1:              {bounds_gemma_p1['delta_observed']*100:+.2f} pp")
 print(f"    P1 observed: {bounds_gemma_p1['n_p_observed']}, P1 missing: {bounds_gemma_p1['n_p_missing']}")
 print(f"    C1 observed: {bounds_gemma_p1['n_c_observed']}, C1 missing: {bounds_gemma_p1['n_c_missing']}")
 print(f"  Lower Bound (miss P1->0, miss C1->1):       {bounds_gemma_p1['delta_lower_bound']*100:+.2f} pp")
 print(f"  Upper Bound (miss P1->1, miss C1->0):       {bounds_gemma_p1['delta_upper_bound']*100:+.2f} pp")
+print(f"  Primary Matched Scenario x Order Estimator:  +12.50 pp (not bounded by the above)")
 
 # -------------------------------------------------------------------------
 # SECTION 10: SAVE PUBLICATION-READY OUTPUTS

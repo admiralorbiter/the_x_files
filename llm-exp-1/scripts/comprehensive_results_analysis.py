@@ -1,5 +1,10 @@
 """
-IMPACT Study 1 — Comprehensive Canonical Results Analysis (v1.3)
+IMPACT Study 1 — Comprehensive Results Summary (v1.3)
+
+This script produces the **supplementary** cross-mechanism report.  It is NOT
+the authoritative state-transition / mechanistic pipeline — that role belongs
+to `analyze_state_transitions.py`, which produces `analysis_output.txt` and
+`analysis_metadata.json`.
 
 Computes:
 1. State-transition analysis (susceptibility rates, action-only compliance vs moral assimilation)
@@ -10,8 +15,8 @@ Computes:
 6. Head-to-head model comparisons on identical scenarios
 
 Saves outputs to:
-- results/runs/20260809_233031_study_1_production/analysis_output.txt
-- results/runs/20260809_233031_study_1_production/analysis_metadata.json
+- results/runs/20260809_233031_study_1_production/comprehensive_analysis_output.txt
+- results/runs/20260809_233031_study_1_production/comprehensive_analysis_metadata.json
 - results/runs/20260809_233031_study_1_production/scenario_paired_results.csv
 """
 
@@ -43,7 +48,8 @@ def log(msg=""):
     log_lines.append(str(msg))
 
 log("=" * 90)
-log("IMPACT STUDY 1 — CANONICAL RESULTS ANALYSIS (v1.3 STATE-TRANSITION PIPELINE)")
+log("IMPACT STUDY 1 — COMPREHENSIVE RESULTS SUMMARY (v1.3)")
+log("  Note: Authoritative state-transition output is produced by analyze_state_transitions.py")
 log("=" * 90)
 
 # ============================================================
@@ -343,11 +349,11 @@ metadata = {
     }
 }
 
-with open(RUN / "analysis_metadata.json", "w", encoding="utf-8") as f:
+with open(RUN / "comprehensive_analysis_metadata.json", "w", encoding="utf-8") as f:
     json.dump(metadata, f, indent=2)
 
-# Save analysis_output.txt
-with open(RUN / "analysis_output.txt", "w", encoding="utf-8") as f:
+# Save comprehensive_analysis_output.txt (distinct from the authoritative analysis_output.txt)
+with open(RUN / "comprehensive_analysis_output.txt", "w", encoding="utf-8") as f:
     f.write("\n".join(log_lines) + "\n")
 
-log(f"\nSaved analysis_metadata.json and analysis_output.txt to {RUN}")
+log(f"\nSaved comprehensive_analysis_metadata.json and comprehensive_analysis_output.txt to {RUN}")
