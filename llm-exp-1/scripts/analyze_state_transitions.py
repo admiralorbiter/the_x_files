@@ -11,8 +11,10 @@ import json
 import warnings
 from pathlib import Path
 
-# Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root and src to sys.path
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir / "src"))
+sys.path.insert(0, str(root_dir))
 
 import numpy as np
 import pandas as pd
@@ -23,10 +25,11 @@ if sys.stdout.encoding.lower() != "utf-8":
 warnings.filterwarnings("ignore")
 
 # Import analysis library functions
-from src.impact.analysis.transitions import (
+from impact.analysis.transitions import (
     classify_state,
     verify_algebraic_identity,
     compute_wilson_ci,
+    compute_two_stage_summary,
     compute_destabilization_metrics,
     detect_missing_cells_from_manifest,
     compute_missingness_bounds,
@@ -148,13 +151,15 @@ for model in sorted(df_primary["model_id"].unique()):
 # -------------------------------------------------------------------------
 print("\n" + "=" * 100)
 print("SECTION 2: TWO-STAGE SUSCEPTIBILITY & ASSIMILATION MODEL (HEADROOM CONDITIONED)")
-print("  NOTE: headroom_n is ORDER-LEVEL matched observations; Stage 1 uses equal-scenario weighting.")
+print("  Estimand: P(switch|S_C=R) = N_switch/N_R (order-level conditional probability).")
+print("  CI: Scenario-cluster bootstrap (resample scenarios, include all order observations).")
 print("=" * 100)
 
 print(f"{'Model':12s} | {'Mechanism':12s} | {'Headroom N':10s} | {'Stage 1: Susceptibility P(Switch|R)':38s} | {'Stage 2: Assimilation P(M|Switch) [Wilson]':45s}")
 print("-" * 125)
 
 stage_model_rows = []
+rng = np.random.RandomState(42)
 
 for model in sorted(df_primary["model_id"].unique()):
     m_df = df_primary[df_primary["model_id"] == model]
@@ -169,57 +174,18 @@ for model in sorted(df_primary["model_id"].unique()):
 
         if n_r > 0:
             headroom["is_switch"] = headroom["state_p"].isin(["C", "M"]).astype(int)
-            switches = headroom[headroom["is_switch"] == 1]
-            n_switches = len(switches)
 
-            # Scenario-level switch rates for aligned point estimate & scenario bootstrap
-            scen_means = headroom.groupby("scenario_id")["is_switch"].mean()
-            s1_rate = float(scen_means.mean())  # Equal-scenario-weighted mean
-            n_scen = len(scen_means)
-            
-            if n_scen > 1:
-                scen_arr = scen_means.values
-                boot_idx = np.random.randint(0, n_scen, size=(2000, n_scen))
-                s1_boots = np.mean(scen_arr[boot_idx], axis=1)
-                s1_ci = (float(np.percentile(s1_boots, 2.5)), float(np.percentile(s1_boots, 97.5)))
-            else:
-                s1_ci = (s1_rate, s1_rate)
-
-            # Stage 2: Among switchers, compute Wilson score CI and scenario-cluster bootstrap CI
-            if n_switches > 0:
-                n_assim = int((switches["state_p"] == "M").sum())
-                s2_rate = float(n_assim / n_switches)
-                s2_wilson_ci = compute_wilson_ci(n_assim, n_switches)
-
-                # Scenario-clustered bootstrap for Stage 2 (vectorized)
-                scen_grouped = headroom.groupby("scenario_id").apply(
-                    lambda g: pd.Series({"n_sw": g["is_switch"].sum(), "n_m": (g["state_p"] == "M").sum()})
-                )
-                sw_scen_df = scen_grouped[scen_grouped["n_sw"] > 0]
-                n_sw_scen = len(sw_scen_df)
-                if n_sw_scen > 1:
-                    n_sw_arr = sw_scen_df["n_sw"].values
-                    n_m_arr = sw_scen_df["n_m"].values
-                    boot_idx = np.random.randint(0, n_sw_scen, size=(1000, n_sw_scen))
-                    boot_n_m = np.sum(n_m_arr[boot_idx], axis=1)
-                    boot_n_sw = np.sum(n_sw_arr[boot_idx], axis=1)
-                    valid_mask = boot_n_sw > 0
-                    if np.any(valid_mask):
-                        s2_boots = boot_n_m[valid_mask] / boot_n_sw[valid_mask]
-                        s2_cluster_ci = (float(np.percentile(s2_boots, 2.5)), float(np.percentile(s2_boots, 97.5)))
-                    else:
-                        s2_cluster_ci = s2_wilson_ci
-                else:
-                    s2_cluster_ci = s2_wilson_ci
-            else:
-                s2_rate = float("nan")
-                s2_wilson_ci = (float("nan"), float("nan"))
-                s2_cluster_ci = (float("nan"), float("nan"))
+            summary = compute_two_stage_summary(headroom, n_bootstrap=2000, rng=rng)
+            n_switches = summary["switches_n"]
+            s1_rate = summary["susceptibility_rate"]
+            s1_ci = (summary["susceptibility_ci_lower"], summary["susceptibility_ci_upper"])
 
             s1_str = f"{s1_rate*100:5.1f}% ({n_switches}/{n_r}) [{s1_ci[0]*100:4.1f}%, {s1_ci[1]*100:4.1f}%]"
             if n_switches > 0:
-                n_assim = int((switches["state_p"] == "M").sum())
-                s2_str = f"{s2_rate*100:5.1f}% ({n_assim}/{n_switches}) [{s2_wilson_ci[0]*100:4.1f}%, {s2_wilson_ci[1]*100:4.1f}%]"
+                s2_rate = summary["assimilation_share"]
+                n_assim = summary["assimilation_n"]
+                s2_wilson = (summary["assimilation_wilson_ci_lower"], summary["assimilation_wilson_ci_upper"])
+                s2_str = f"{s2_rate*100:5.1f}% ({n_assim}/{n_switches}) [{s2_wilson[0]*100:4.1f}%, {s2_wilson[1]*100:4.1f}%]"
             else:
                 s2_str = "NA (0 switches; P(M|switch) undefined)"
 
@@ -229,18 +195,7 @@ for model in sorted(df_primary["model_id"].unique()):
                 "model_id": model,
                 "mechanism": f_name,
                 "analysis_unit": "order_level_matched_observations",
-                "headroom_n": n_r,
-                "susceptibility_rate": s1_rate,
-                "susceptibility_ci_lower": s1_ci[0],
-                "susceptibility_ci_upper": s1_ci[1],
-                "switches_n": n_switches,
-                "assimilation_n": int((switches["state_p"] == "M").sum()) if n_switches > 0 else 0,
-                "assimilation_share": s2_rate if n_switches > 0 else None,
-                "assimilation_wilson_ci_lower": s2_wilson_ci[0] if n_switches > 0 else None,
-                "assimilation_wilson_ci_upper": s2_wilson_ci[1] if n_switches > 0 else None,
-                "assimilation_cluster_ci_lower": s2_cluster_ci[0] if n_switches > 0 else None,
-                "assimilation_cluster_ci_upper": s2_cluster_ci[1] if n_switches > 0 else None,
-                "compliance_share": 1.0 - s2_rate if n_switches > 0 else None,
+                **summary,
             })
 
 # -------------------------------------------------------------------------
@@ -297,8 +252,9 @@ print("\n" + "=" * 100)
 print("SECTION 4: DIRECTIONAL CONTROL VS GROSS DECISION DESTABILIZATION")
 print("=" * 100)
 
-print(f"{'Model':12s} | {'Mechanism':12s} | {'N Matched':9s} | {'N Changed':9s} | {'N Target':9s} | {'N Away':8s} | {'Gross %':8s} | {'Net Shift':10s} | {'Rho':7s} | {'P(Target|Chg)':13s} | {'Binom p-val':11s}")
-print("-" * 125)
+print("  NOTE: Binomial p-values are ORDER-LEVEL DESCRIPTIVE (do not account for scenario clustering).")
+print(f"{'Model':12s} | {'Mechanism':12s} | {'N Matched':9s} | {'N Changed':9s} | {'N Target':9s} | {'N Away':8s} | {'Gross %':8s} | {'Net Shift':10s} | {'Rho':7s} | {'P(Target|Chg)':13s} | {'Binom p (desc)':14s}")
+print("-" * 130)
 
 destab_rows = []
 
@@ -319,7 +275,7 @@ for model in sorted(df_primary["model_id"].unique()):
         net = metrics["net_shift"]
         rho = metrics["directionality_ratio"]
         p_tchg = metrics["p_targetward_given_changed"]
-        pval = metrics["binomial_pvalue"]
+        pval = metrics["binomial_pvalue_descriptive"]
 
         p_tchg_str = f"{p_tchg*100:5.1f}% ({n_t}/{n_c})" if n_c > 0 else "NA"
         pval_str = f"{pval:11.4f}" if not np.isnan(pval) else "NA"
@@ -338,7 +294,7 @@ for model in sorted(df_primary["model_id"].unique()):
             "net_shift": net,
             "directionality_ratio": rho,
             "p_targetward_given_changed": p_tchg,
-            "binomial_pvalue": pval,
+            "binomial_pvalue_descriptive": pval,
         })
 
 # -------------------------------------------------------------------------
@@ -448,16 +404,26 @@ print("\n" + "=" * 100)
 print("SECTION 9: MANIFEST MISSINGNESS RECONSTRUCTION & SENSITIVITY BOUNDS")
 print("=" * 100)
 
-missing_df = detect_missing_cells_from_manifest(manifest_df, df_primary)
-missing_df = missing_df.merge(reg_annotated[["scenario_id", "target_relation_to_human", "domain"]], on="scenario_id", how="left")
-print(f"Total Terminal Missing Cells (Manifest Denominator 2,304 - Parsed 2,290): {len(missing_df)}")
-print(missing_df[["cell_id", "model_id", "treatment_id", "scenario_id", "target_relation_to_human"]].to_string())
+# Use df_master (all 2,290 parsed rows) — NOT df_primary (2,276 direct-valid) —
+# so format-retry successes are not mislabeled as terminal failures.
+missing_df = detect_missing_cells_from_manifest(manifest_df, df_master)
+missing_df = missing_df.merge(
+    reg_annotated[["scenario_id", "target_relation_to_human", "domain"]].drop_duplicates(),
+    on="scenario_id", how="left"
+)
+print(f"Manifest Denominator: {len(manifest_df)} | Parsed (df_master): {len(df_master)} | Primary (df_primary): {len(df_primary)}")
+print(f"Terminal Missing Cells: {len(missing_df)}")
+if len(missing_df) > 0:
+    cols = [c for c in ["cell_id", "model_id", "treatment_id", "scenario_id", "target_relation_to_human"] if c in missing_df.columns]
+    print(missing_df[cols].to_string())
 
-print("\nGemma Authority Sensitivity Bounds under Extreme Missing Data Assumptions:")
+print("\nGemma Authority Sensitivity Bounds (varying BOTH P1 and C1 missing cells):")
 bounds_gemma_p1 = compute_missingness_bounds(df_primary, missing_df, "gemma4:12b", "P1_authority_pressure", "C1_authority_neutral")
-print(f"  Observed Delta A_P1:          {bounds_gemma_p1['delta_observed']*100:+.2f} pp (N_obs={bounds_gemma_p1['n_observed']}, N_miss={bounds_gemma_p1['n_missing']})")
-print(f"  Lower Bound (All Missing=0):  {bounds_gemma_p1['delta_lower_bound']*100:+.2f} pp")
-print(f"  Upper Bound (All Missing=1):  {bounds_gemma_p1['delta_upper_bound']*100:+.2f} pp")
+print(f"  Observed Delta A_P1:                        {bounds_gemma_p1['delta_observed']*100:+.2f} pp")
+print(f"    P1 observed: {bounds_gemma_p1['n_p_observed']}, P1 missing: {bounds_gemma_p1['n_p_missing']}")
+print(f"    C1 observed: {bounds_gemma_p1['n_c_observed']}, C1 missing: {bounds_gemma_p1['n_c_missing']}")
+print(f"  Lower Bound (miss P1->0, miss C1->1):       {bounds_gemma_p1['delta_lower_bound']*100:+.2f} pp")
+print(f"  Upper Bound (miss P1->1, miss C1->0):       {bounds_gemma_p1['delta_upper_bound']*100:+.2f} pp")
 
 # -------------------------------------------------------------------------
 # SECTION 10: SAVE PUBLICATION-READY OUTPUTS
@@ -474,14 +440,20 @@ destab_df = pd.DataFrame(destab_rows)
 destab_df.to_csv(RUN / "destabilization_analysis.csv", index=False)
 print(f"Saved destabilization analysis to: {RUN / 'destabilization_analysis.csv'}")
 
+from datetime import datetime, timezone
 meta = {
     "run_id": "20260809_233031_study_1_production",
-    "analysis_version": "1.2",
+    "analysis_version": "1.3",
     "seed": 42,
     "manifest_denominator": len(manifest_df),
+    "parsed_total_obs": len(df_master),
     "primary_valid_obs": len(df_primary),
     "terminal_missing_obs": len(missing_df),
-    "generated_at": "2026-08-10T23:30:00-05:00",
+    "stage1_estimand": "order_level_conditional_probability",
+    "stage1_ci": "scenario_cluster_bootstrap",
+    "stage2_ci": "wilson_score_and_scenario_cluster_bootstrap",
+    "destabilization_pvalue": "order_level_descriptive_binomial",
+    "generated_at": datetime.now(timezone.utc).isoformat(),
 }
 with open(RUN / "analysis_metadata.json", "w") as f:
     json.dump(meta, f, indent=2)

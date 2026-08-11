@@ -7,10 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.impact.analysis.transitions import (
+from impact.analysis.transitions import (
     classify_state,
     verify_algebraic_identity,
     compute_wilson_ci,
+    compute_two_stage_summary,
     compute_destabilization_metrics,
     detect_missing_cells_from_manifest,
     compute_missingness_bounds,
@@ -81,7 +82,7 @@ def test_missing_cells_from_manifest():
         "treatment_id": ["t1"] * 8,
     })
     observed_df = pd.DataFrame({
-        "cell_id": [f"cell_{i}" for i in range(1, 8)], # Cell 8 missing
+        "cell_id": [f"cell_{i}" for i in range(1, 8)],  # Cell 8 missing
         "model_id": ["m1"] * 7,
         "treatment_id": ["t1"] * 7,
     })
@@ -93,7 +94,7 @@ def test_missing_cells_from_manifest():
 
 def test_destabilization_directionality():
     """Verify rho=1 for pure targetward changes and rho=0 for equal targetward/away churn."""
-    # 4 targetward, 0 away -> rho = +1.0, p_value = 0.125
+    # 4 targetward, 0 away -> rho = +1.0
     pure_targetward = pd.DataFrame({
         "is_target_action_c": [0, 0, 0, 0],
         "is_target_action_p": [1, 1, 1, 1],
@@ -105,7 +106,7 @@ def test_destabilization_directionality():
     assert pytest.approx(metrics_pure["directionality_ratio"]) == 1.0
     assert pytest.approx(metrics_pure["p_targetward_given_changed"]) == 1.0
 
-    # 3 targetward, 3 away -> rho = 0.0, p_value = 1.0
+    # 3 targetward, 3 away -> rho = 0.0
     equal_churn = pd.DataFrame({
         "is_target_action_c": [0, 0, 0, 1, 1, 1],
         "is_target_action_p": [1, 1, 1, 0, 0, 0],
@@ -116,4 +117,95 @@ def test_destabilization_directionality():
     assert metrics_churn["n_away"] == 3
     assert pytest.approx(metrics_churn["directionality_ratio"]) == 0.0
     assert pytest.approx(metrics_churn["p_targetward_given_changed"]) == 0.5
-    assert pytest.approx(metrics_churn["binomial_pvalue"]) == 1.0
+    assert pytest.approx(metrics_churn["binomial_pvalue_descriptive"]) == 1.0
+
+
+def test_two_stage_summary_asymmetric_orders():
+    """
+    Scenario A has headroom in both orders (2 observations).
+    Scenario B has headroom in only one order (1 observation).
+
+    The order-level point estimate should weight A twice and B once:
+    p_hat = N_switch / N_R.
+
+    Scenario A: both orders switch (is_switch=1), both assimilate (state_p=M).
+    Scenario B: one order switches (is_switch=1), compartmentalizes (state_p=C).
+
+    Expected:
+    N_R = 3, N_switch = 3, susceptibility_rate = 3/3 = 1.0
+    Assimilation: 2 M out of 3 switches = 2/3 ≈ 0.6667
+    """
+    headroom_df = pd.DataFrame({
+        "scenario_id": ["A", "A", "B"],
+        "state_p": ["M", "M", "C"],
+        "is_switch": [1, 1, 1],
+    })
+
+    result = compute_two_stage_summary(headroom_df, n_bootstrap=500, rng=np.random.RandomState(0))
+
+    assert result["headroom_n"] == 3
+    assert result["switches_n"] == 3
+    assert pytest.approx(result["susceptibility_rate"]) == 1.0
+    assert result["assimilation_n"] == 2
+    assert pytest.approx(result["assimilation_share"], abs=0.001) == 2 / 3
+
+
+def test_two_stage_summary_zero_switches():
+    """When no headroom observations switch, assimilation should be None/NaN."""
+    headroom_df = pd.DataFrame({
+        "scenario_id": ["A", "A", "B"],
+        "state_p": ["R", "R", "R"],
+        "is_switch": [0, 0, 0],
+    })
+
+    result = compute_two_stage_summary(headroom_df, n_bootstrap=100, rng=np.random.RandomState(0))
+
+    assert result["headroom_n"] == 3
+    assert result["switches_n"] == 0
+    assert pytest.approx(result["susceptibility_rate"]) == 0.0
+    assert result["assimilation_share"] is None
+    assert result["assimilation_n"] == 0
+
+
+def test_missingness_bounds_both_sides():
+    """
+    Verify that compute_missingness_bounds varies BOTH pressure and control missing cells.
+
+    Setup:
+    - 4 observed P1 cells: 3 target actions (sum=3, rate=0.75)
+    - 2 observed C1 cells: 0 target actions (sum=0, rate=0.00)
+    - 1 missing P1 cell
+    - 1 missing C1 cell
+
+    Observed delta = 0.75 - 0.00 = 0.75
+
+    Lower bound (miss P→0, miss C→1):
+      P rate = 3/(4+1) = 0.60
+      C rate = (0+1)/(2+1) = 0.333
+      delta_lower = 0.60 - 0.333 = 0.2667
+
+    Upper bound (miss P→1, miss C→0):
+      P rate = (3+1)/(4+1) = 0.80
+      C rate = 0/(2+1) = 0.00
+      delta_upper = 0.80 - 0.00 = 0.80
+    """
+    observed_df = pd.DataFrame({
+        "model_id": ["m1"] * 6,
+        "treatment_id": ["P1"] * 4 + ["C1"] * 2,
+        "is_target_action": [1, 1, 1, 0, 0, 0],
+    })
+
+    missing_df = pd.DataFrame({
+        "model_id": ["m1", "m1"],
+        "treatment_id": ["P1", "C1"],
+    })
+
+    result = compute_missingness_bounds(observed_df, missing_df, "m1", "P1", "C1")
+
+    assert result["n_p_observed"] == 4
+    assert result["n_p_missing"] == 1
+    assert result["n_c_observed"] == 2
+    assert result["n_c_missing"] == 1
+    assert pytest.approx(result["delta_observed"], abs=0.001) == 0.75
+    assert pytest.approx(result["delta_lower_bound"], abs=0.001) == 0.2667
+    assert pytest.approx(result["delta_upper_bound"], abs=0.001) == 0.80

@@ -1,4 +1,4 @@
-model_id,mechanism,analysis_unit,n_matched,n_changed,n_targetward,n_away,gross_change_rate,net_shift,directionality_ratio,p_targetward_given_changed,binomial_pvalue
+model_id,mechanism,analysis_unit,n_matched,n_changed,n_targetward,n_away,gross_change_rate,net_shift,directionality_ratio,p_targetward_given_changed,binomial_pvalue_descriptive
 gemma4:12b,Authority,order_level_matched_observations,115,16,15,1,0.1391304347826087,0.12173913043478263,0.8750000000000001,0.9375,0.000518798828125
 gemma4:12b,Incentive,order_level_matched_observations,124,3,0,3,0.024193548387096774,-0.024193548387096808,-1.0000000000000013,0.0,0.25
 gemma4:12b,Social,order_level_matched_observations,125,8,7,1,0.064,0.04799999999999999,0.7499999999999998,0.875,0.0703125
